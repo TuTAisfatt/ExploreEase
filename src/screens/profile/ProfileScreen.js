@@ -1,13 +1,54 @@
-import React, { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
-  StyleSheet, Image, Alert, Platform,
+  StyleSheet, Image, Alert, Platform, Switch,
 } from 'react-native';
+import * as LocalAuthentication from 'expo-local-authentication';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '../../context/AuthContext';
 import { INTEREST_TAGS, TRAVEL_STYLES } from '../../utils/constants';
 
 export default function ProfileScreen({ navigation }) {
   const { user, userProfile, logout, isAdmin, recheckAuth } = useAuth();
+
+  const [biometricEnabled, setBiometricEnabled] = useState(false);
+
+  // Load biometric setting on mount
+  useEffect(() => {
+    AsyncStorage.getItem('biometricEnabled').then(val => {
+      setBiometricEnabled(val === 'true');
+    });
+  }, []);
+
+  async function handleBiometricToggle(value) {
+    if (value) {
+      // Test biometric before enabling
+      const hasHardware = await LocalAuthentication.hasHardwareAsync();
+      const isEnrolled  = await LocalAuthentication.isEnrolledAsync();
+
+      if (!hasHardware || !isEnrolled) {
+        if (Platform.OS === 'web') {
+          window.alert('No biometric authentication available on this device.');
+        } else {
+          Alert.alert('Not available', 'No biometric authentication found on this device.');
+        }
+        return;
+      }
+
+      const result = await LocalAuthentication.authenticateAsync({
+        promptMessage: 'Confirm your identity to enable biometric lock',
+        fallbackLabel: 'Use passcode',
+      });
+
+      if (result.success) {
+        await AsyncStorage.setItem('biometricEnabled', 'true');
+        setBiometricEnabled(true);
+      }
+    } else {
+      await AsyncStorage.setItem('biometricEnabled', 'false');
+      setBiometricEnabled(false);
+    }
+  }
 
   async function handleLogout() {
     // Use window.confirm on web, Alert on mobile
@@ -135,6 +176,23 @@ export default function ProfileScreen({ navigation }) {
           onPress={() => navigation.navigate('GDPR')}
         />
 
+        {/* Biometric lock toggle */}
+        <View style={styles.biometricRow}>
+          <View style={styles.biometricLeft}>
+            <Text style={styles.biometricIcon}>🔐</Text>
+            <View>
+              <Text style={styles.biometricTitle}>Biometric lock</Text>
+              <Text style={styles.biometricSub}>Require fingerprint/Face ID on open</Text>
+            </View>
+          </View>
+          <Switch
+            value={biometricEnabled}
+            onValueChange={handleBiometricToggle}
+            trackColor={{ false: '#e0e0e0', true: '#1D9E75' }}
+            thumbColor="#fff"
+          />
+        </View>
+
         <ActionButton
           label="🚪  Log out"
           onPress={handleLogout}
@@ -208,4 +266,10 @@ const styles = StyleSheet.create({
   actionBtnText:   { fontSize: 15, color: '#1a1a1a', fontWeight: '500' },
   actionBtnTextDanger: { color: '#E24B4A' },
   actionBtnArrow:  { fontSize: 20, color: '#ccc' },
+
+  biometricRow:    { backgroundColor: '#fff', borderRadius: 14, paddingHorizontal: 18, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderWidth: 1, borderColor: '#f0f0f0' },
+  biometricLeft:   { flexDirection: 'row', alignItems: 'center', gap: 14, flex: 1 },
+  biometricIcon:   { fontSize: 22 },
+  biometricTitle:  { fontSize: 15, color: '#1a1a1a', fontWeight: '500' },
+  biometricSub:    { fontSize: 12, color: '#aaa', marginTop: 2 },
 });
