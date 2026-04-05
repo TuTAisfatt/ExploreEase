@@ -47,7 +47,7 @@ function DiscoverStack() {
 function EventsStack() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="Events"      component={Placeholder} />
+      <Stack.Screen name="EventsHome"  component={Placeholder} />
       <Stack.Screen name="EventDetail" component={Placeholder} />
       <Stack.Screen name="CreateEvent" component={Placeholder} />
     </Stack.Navigator>
@@ -57,8 +57,8 @@ function EventsStack() {
 function SocialStack() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="Feed" component={Placeholder} />
-      <Stack.Screen name="Chat" component={Placeholder} />
+      <Stack.Screen name="SocialFeed" component={Placeholder} />
+      <Stack.Screen name="SocialChat" component={Placeholder} />
     </Stack.Navigator>
   );
 }

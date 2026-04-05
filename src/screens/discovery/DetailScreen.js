@@ -2,14 +2,15 @@ import React, { useState, useEffect } from 'react';
 import {
   View, Text, ScrollView, Image, TouchableOpacity,
   StyleSheet, ActivityIndicator, Alert, Linking,
-  Platform, FlatList,
+  Platform, FlatList, TextInput,
 } from 'react-native';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, getDocs, collection } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { getReviews, addReview, flagReview } from '../../services/reviewService';
 import { addBookmark, removeBookmark, getBookmarks } from '../../services/userService';
 import { formatDistance, getDistance } from '../../services/locationService';
+import { getSimilarAttractions, trackActivity } from '../../services/recommendationService';
 import { useLocation } from '../../hooks/useLocation';
 import StarRating from '../../components/StarRating';
 
@@ -25,7 +26,8 @@ export default function DetailScreen({ route, navigation }) {
   const [myRating,    setMyRating]    = useState(0);
   const [reviewText,  setReviewText]  = useState('');
   const [submitting,  setSubmitting]  = useState(false);
-  const [reviewsSort, setReviewsSort] = useState('newest');
+  const [reviewsSort,  setReviewsSort]  = useState('newest');
+  const [similarItems, setSimilarItems] = useState([]);
 
   // ── Load attraction + reviews + bookmark status ──────────
   useEffect(() => {
@@ -49,6 +51,28 @@ export default function DetailScreen({ route, navigation }) {
       }
     })();
   }, [itemId]);
+
+  // ── Load similar attractions ─────────────────────────────
+  useEffect(() => {
+    if (!item) return;
+    (async () => {
+      try {
+        const snap = await getDocs(collection(db, 'attractions'));
+        const all  = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        const similar = await getSimilarAttractions(item, all, 4);
+        setSimilarItems(similar);
+      } catch (e) {
+        console.error('Similar attractions error:', e);
+      }
+    })();
+  }, [item]);
+
+  // ── Track view activity ───────────────────────────────────
+  useEffect(() => {
+    if (item && user) {
+      trackActivity(user.uid, item.id, 'view');
+    }
+  }, [item]);
 
   // ── Reload reviews when sort changes ─────────────────────
   useEffect(() => {
@@ -379,12 +403,64 @@ export default function DetailScreen({ route, navigation }) {
         </View>
 
       </View>
+
+      {/* ── You might also like ── */}
+      {similarItems.length > 0 && (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>You might also like</Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.similarList}
+          >
+            {similarItems.map(similar => (
+              <TouchableOpacity
+                key={similar.id}
+                style={styles.similarCard}
+                onPress={() => navigation.push('Detail', {
+                  itemId: similar.id,
+                  type:   'attraction',
+                })}
+                activeOpacity={0.85}
+              >
+                {similar.images?.[0] ? (
+                  <Image
+                    source={{ uri: similar.images[0] }}
+                    style={styles.similarImage}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <View style={[styles.similarImage, styles.similarImagePlaceholder]}>
+                    <Text style={{ fontSize: 24 }}>🏙️</Text>
+                  </View>
+                )}
+                <View style={styles.similarInfo}>
+                  <Text style={styles.similarName} numberOfLines={2}>
+                    {similar.name}
+                  </Text>
+                  <View style={styles.similarMeta}>
+                    <View style={styles.similarBadge}>
+                      <Text style={styles.similarBadgeText}>
+                        {similar.category ?? 'place'}
+                      </Text>
+                    </View>
+                    {similar.reviewCount > 0 && (
+                      <Text style={styles.similarRating}>
+                        ⭐ {(similar.ratingSum / similar.reviewCount).toFixed(1)}
+                      </Text>
+                    )}
+                  </View>
+                </View>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
     </ScrollView>
   );
 }
 
-// ── Review text input (cross-platform) ───────────────────
-import { TextInput } from 'react-native';
 
 function ReviewTextInput({ value, onChange }) {
   return (
@@ -517,4 +593,17 @@ const styles = StyleSheet.create({
   replyBox:         { backgroundColor: '#f9fafb', borderRadius: 8, padding: 10, marginTop: 10, borderLeftWidth: 3, borderLeftColor: '#1D9E75', borderRadius: 0 },
   replyLabel:       { fontSize: 12, fontWeight: '700', color: '#1D9E75', marginBottom: 4 },
   replyText:        { fontSize: 13, color: '#555' },
+
+  section:                 { marginBottom: 16 },
+  sectionTitle:            { fontSize: 17, fontWeight: '700', color: '#1a1a1a', paddingHorizontal: 20, marginBottom: 12 },
+  similarList:             { paddingHorizontal: 20, gap: 12, paddingBottom: 8 },
+  similarCard:             { width: 160, backgroundColor: '#fff', borderRadius: 14, overflow: 'hidden', borderWidth: 1, borderColor: '#f0f0f0' },
+  similarImage:            { width: '100%', height: 110 },
+  similarImagePlaceholder: { backgroundColor: '#f5f5f5', justifyContent: 'center', alignItems: 'center' },
+  similarInfo:             { padding: 10 },
+  similarName:             { fontSize: 13, fontWeight: '700', color: '#1a1a1a', marginBottom: 6 },
+  similarMeta:             { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  similarBadge:            { backgroundColor: '#E1F5EE', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
+  similarBadgeText:        { fontSize: 10, color: '#0F6E56', fontWeight: '700', textTransform: 'capitalize' },
+  similarRating:           { fontSize: 11, color: '#888' },
 });

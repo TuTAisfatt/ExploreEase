@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, FlatList, TouchableOpacity,
   StyleSheet, ActivityIndicator, Image, Keyboard,
@@ -158,6 +158,7 @@ export default function SearchScreen({ navigation }) {
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.chips}
+        style={{ flexGrow: 0 }}
         renderItem={({ item }) => (
           <TouchableOpacity
             style={[
@@ -340,21 +341,21 @@ const styles = StyleSheet.create({
   filterBtnActive: { backgroundColor: '#E1F5EE', borderColor: '#1D9E75' },
   filterBtnText:   { fontSize: 18 },
 
-  chips:           { paddingHorizontal: 16, paddingBottom: 8, gap: 8 },
-  chip:            { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: '#fff', borderWidth: 1, borderColor: '#e0e0e0' },
+  chips:           { paddingHorizontal: 16, paddingVertical: 8, gap: 8 },
+  chip:            { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: '#fff', borderWidth: 1, borderColor: '#e0e0e0', alignSelf: 'flex-start', height: 36, justifyContent: 'center' },
   chipActive:      { backgroundColor: '#1D9E75', borderColor: '#1D9E75' },
   chipText:        { fontSize: 12, color: '#555' },
   chipTextActive:  { color: '#fff', fontWeight: '600' },
 
-  filtersPanel:    { backgroundColor: '#fff', marginHorizontal: 16, borderRadius: 14, padding: 16, marginBottom: 8, borderWidth: 1, borderColor: '#f0f0f0' },
-  filterLabel:     { fontSize: 12, fontWeight: '700', color: '#888', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 },
-  filterRow:       { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 14 },
-  filterChip:      { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: '#f5f5f5', borderWidth: 1, borderColor: '#e8e8e8' },
+  filtersPanel:    { backgroundColor: '#fff', marginHorizontal: 16, borderRadius: 14, padding: 12, marginTop: 4, marginBottom: 4, borderWidth: 1, borderColor: '#f0f0f0' },
+  filterLabel:     { fontSize: 11, fontWeight: '700', color: '#888', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 },
+  filterRow:       { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 10 },
+  filterChip:      { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: '#f5f5f5', borderWidth: 1, borderColor: '#e8e8e8', alignSelf: 'flex-start' },
   filterChipActive:     { backgroundColor: '#1D9E75', borderColor: '#1D9E75' },
   filterChipText:       { fontSize: 12, color: '#555', fontWeight: '500' },
   filterChipTextActive: { color: '#fff', fontWeight: '600' },
 
-  resultsRow:      { paddingHorizontal: 20, paddingVertical: 8 },
+  resultsRow:      { paddingHorizontal: 20, paddingTop: 4, paddingBottom: 4 },
   resultsCount:    { fontSize: 13, color: '#888' },
 
   centered:        { flex: 1, justifyContent: 'center', alignItems: 'center' },
