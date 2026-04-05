@@ -1,0 +1,198 @@
+import * as Location from 'expo-location';
+import { collection, addDoc, getDocs, query, where, orderBy, limit, GeoPoint } from 'firebase/firestore';
+import { db } from '../config/firebase';
+
+// Default location — Ho Chi Minh City
+export const DEFAULT_REGION = {
+  latitude:       10.8231,
+  longitude:      106.6297,
+  latitudeDelta:  0.05,
+  longitudeDelta: 0.05,
+};
+
+// ─────────────────────────────────────────────
+// 1. REQUEST LOCATION PERMISSION & GET LOCATION
+// ─────────────────────────────────────────────
+export async function getCurrentLocation() {
+  // Request foreground permission (handles Android 12+ properly)
+  const { status } = await Location.requestForegroundPermissionsAsync();
+
+  if (status !== 'granted') {
+    // Permission denied — return default location silently
+    return {
+      granted: false,
+      region:  DEFAULT_REGION,
+    };
+  }
+
+  const loc = await Location.getCurrentPositionAsync({
+    accuracy: Location.Accuracy.Balanced,
+  });
+
+  return {
+    granted: true,
+    region: {
+      latitude:       loc.coords.latitude,
+      longitude:      loc.coords.longitude,
+      latitudeDelta:  0.05,
+      longitudeDelta: 0.05,
+    },
+  };
+}
+
+// ─────────────────────────────────────────────
+// 2. CALCULATE DISTANCE BETWEEN TWO POINTS
+// Uses Haversine formula — returns distance in km
+// ─────────────────────────────────────────────
+export function getDistance(lat1, lon1, lat2, lon2) {
+  const R    = 6371; // Earth radius in km
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a    =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) *
+    Math.cos(toRad(lat2)) *
+    Math.sin(dLon / 2) *
+    Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+function toRad(deg) {
+  return deg * (Math.PI / 180);
+}
+
+// Format distance nicely: "0.3 km" or "1.2 km"
+export function formatDistance(km) {
+  if (km < 1) return `${Math.round(km * 1000)} m`;
+  return `${km.toFixed(1)} km`;
+}
+
+// ─────────────────────────────────────────────
+// 3. GET NEARBY ATTRACTIONS FROM FIRESTORE
+// ─────────────────────────────────────────────
+export async function getNearbyAttractions(latitude, longitude, radiusKm = 10) {
+  // Firestore doesn't support geo queries natively
+  // We use a bounding box then filter by exact distance
+  const delta = radiusKm / 111; // ~111 km per degree of latitude
+
+  const latMin = latitude  - delta;
+  const latMax = latitude  + delta;
+
+  // Fetch all attractions (for small datasets this is fine)
+  // For large datasets you would use GeoFirestore or Algolia
+  const snap = await getDocs(collection(db, 'attractions'));
+
+  const nearby = snap.docs
+    .map(d => ({ id: d.id, ...d.data() }))
+    .filter(a => {
+      if (!a.location) return false;
+      const lat = a.location.latitude  ?? a.location._lat;
+      const lng = a.location.longitude ?? a.location._long;
+      const dist = getDistance(latitude, longitude, lat, lng);
+      return dist <= radiusKm;
+    })
+    .map(a => {
+      const lat = a.location.latitude  ?? a.location._lat;
+      const lng = a.location.longitude ?? a.location._long;
+      return {
+        ...a,
+        distance: getDistance(latitude, longitude, lat, lng),
+      };
+    })
+    .sort((a, b) => a.distance - b.distance);
+
+  return nearby;
+}
+
+// ─────────────────────────────────────────────
+// 4. SEED SAMPLE ATTRACTIONS (run once to populate Firestore)
+// Call this from a dev screen or the console to add test data
+// ─────────────────────────────────────────────
+export async function seedSampleAttractions() {
+  // Check if already seeded — if attractions exist, don't add again
+  const existing = await getDocs(collection(db, 'attractions'));
+  if (existing.docs.length > 0) {
+    console.log('⚠️ Attractions already seeded, skipping.');
+    return;
+  }
+
+  const samples = [
+    {
+      name:        'Ben Thanh Market',
+      nameLower:   'ben thanh market',
+      category:    'shopping',
+      description: 'Iconic market in the heart of Ho Chi Minh City with food, clothing and souvenirs.',
+      address:     'Le Loi, Ben Thanh, District 1, Ho Chi Minh City',
+      location:    new GeoPoint(10.7725, 106.6980),
+      images:      ['https://images.unsplash.com/photo-1616946428893-57999351af47?w=800&q=80'],
+      ratingSum:   42,
+      reviewCount: 9,
+      priceLevel:  1,
+      hours:       '6:00 AM – 6:00 PM',
+      tags:        ['market', 'food', 'shopping'],
+    },
+    {
+      name:        'Notre-Dame Cathedral',
+      nameLower:   'notre-dame cathedral',
+      category:    'culture',
+      description: 'Beautiful French colonial cathedral built in the 19th century.',
+      address:     '01 Công xã Paris, Bến Nghé, District 1',
+      location:    new GeoPoint(10.7797, 106.6990),
+      images:      ['https://images.unsplash.com/photo-1560624052-449f5ddf0c31?w=800&q=80'],
+      ratingSum:   44,
+      reviewCount: 10,
+      priceLevel:  0,
+      hours:       '8:00 AM – 5:00 PM',
+      tags:        ['church', 'history', 'culture'],
+    },
+    {
+      name:        'War Remnants Museum',
+      nameLower:   'war remnants museum',
+      category:    'culture',
+      description: 'Powerful museum documenting the Vietnam War with photos and artifacts.',
+      address:     '28 Vo Van Tan, Ward 6, District 3',
+      location:    new GeoPoint(10.7793, 106.6920),
+      images:      ['https://images.unsplash.com/photo-1528360983277-13d401cdc186?w=800&q=80'],
+      ratingSum:   48,
+      reviewCount: 10,
+      priceLevel:  1,
+      hours:       '7:30 AM – 6:00 PM',
+      tags:        ['museum', 'history', 'culture'],
+    },
+    {
+      name:        'Bui Vien Walking Street',
+      nameLower:   'bui vien walking street',
+      category:    'food',
+      description: 'Vibrant street famous for nightlife, street food and backpacker culture.',
+      address:     'Bui Vien, Pham Ngu Lao, District 1',
+      location:    new GeoPoint(10.7672, 106.6930),
+      images:      ['https://images.unsplash.com/photo-1583417319070-4a69db38a482?w=800&q=80'],
+      ratingSum:   36,
+      reviewCount: 8,
+      priceLevel:  1,
+      hours:       '5:00 PM – 2:00 AM',
+      tags:        ['nightlife', 'food', 'street'],
+    },
+    {
+      name:        'Reunification Palace',
+      nameLower:   'reunification palace',
+      category:    'culture',
+      description: 'Historic government palace that played a key role in the fall of Saigon.',
+      address:     '135 Nam Ky Khoi Nghia, Ben Thanh, District 1',
+      location:    new GeoPoint(10.7769, 106.6956),
+      images:      ['https://images.unsplash.com/photo-1599240211563-17b569b0c0c9?w=800&q=80'],
+      ratingSum:   45,
+      reviewCount: 10,
+      priceLevel:  1,
+      hours:       '8:00 AM – 4:00 PM',
+      tags:        ['history', 'culture', 'palace'],
+    },
+  ];
+
+  for (const attraction of samples) {
+    await addDoc(collection(db, 'attractions'), attraction);
+  }
+
+  console.log('✅ Sample attractions seeded!');
+}
