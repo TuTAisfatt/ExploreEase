@@ -15,6 +15,12 @@ export default function EventDetailScreen({ route, navigation }) {
   const [loading,    setLoading]    = useState(true);
   const [bookmarked, setBookmarked] = useState(false);
   const [joining,    setJoining]    = useState(false);
+  const [now,        setNow]        = useState(Date.now());
+
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -66,7 +72,11 @@ export default function EventDetailScreen({ route, navigation }) {
       if (bookmarked) {
         await removeBookmark(user.uid, eventId);
       } else {
-        await addBookmark(user.uid, eventId, 'event');
+        await addBookmark(user.uid, eventId, 'event', {
+          name:     event.title,
+          address:  event.address,
+          imageUrl: event.imageUrl,
+        });
       }
       setBookmarked(!bookmarked);
     } catch (e) {
@@ -154,9 +164,11 @@ export default function EventDetailScreen({ route, navigation }) {
   const timeStr  = `${startDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })} – ${endDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
 
   // Countdown for upcoming events
-  const msLeft     = startDate.getTime() - Date.now();
-  const daysLeft   = Math.ceil(msLeft / (1000 * 60 * 60 * 24));
-  const hoursLeft  = Math.ceil(msLeft / (1000 * 60 * 60));
+  const msLeft     = startDate.getTime() - now;
+  const daysLeft   = Math.floor(msLeft / (1000 * 60 * 60 * 24));
+  const hoursLeft  = Math.floor((msLeft % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+  const minsLeft   = Math.floor((msLeft % (1000 * 60 * 60)) / (1000 * 60));
+  const secsLeft   = Math.floor((msLeft % (1000 * 60)) / 1000);
 
   const statusColors = {
     incoming:  { bg: '#E1F5EE', text: '#0F6E56', label: 'Upcoming'  },
@@ -210,13 +222,16 @@ export default function EventDetailScreen({ route, navigation }) {
         {status === 'incoming' && msLeft > 0 && (
           <View style={styles.countdownBox}>
             <Text style={styles.countdownEmoji}>⏳</Text>
-            <Text style={styles.countdownText}>
-              {daysLeft > 1
-                ? `Starts in ${daysLeft} days`
-                : hoursLeft > 1
-                ? `Starts in ${hoursLeft} hours`
-                : 'Starting soon!'}
-            </Text>
+            <View>
+              <Text style={styles.countdownLabel}>Event starts in</Text>
+              <Text style={styles.countdownText}>
+                {daysLeft > 0
+                  ? `${daysLeft}d  ${hoursLeft}h  ${minsLeft}m  ${secsLeft}s`
+                  : hoursLeft > 0
+                  ? `${hoursLeft}h  ${minsLeft}m  ${secsLeft}s`
+                  : `${minsLeft}m  ${secsLeft}s`}
+              </Text>
+            </View>
           </View>
         )}
 
@@ -325,7 +340,8 @@ const styles = StyleSheet.create({
 
   countdownBox:     { flexDirection: 'row', alignItems: 'center', backgroundColor: '#E1F5EE', borderRadius: 10, padding: 12, marginBottom: 16, gap: 8 },
   countdownEmoji:   { fontSize: 20 },
-  countdownText:    { fontSize: 14, color: '#0F6E56', fontWeight: '600' },
+  countdownLabel:   { fontSize: 11, color: '#0F6E56', fontWeight: '600', textTransform: 'uppercase', marginBottom: 2 },
+  countdownText:    { fontSize: 20, color: '#0F6E56', fontWeight: '800', letterSpacing: 1 },
 
   infoGrid:         { backgroundColor: '#fff', borderRadius: 14, padding: 16, marginBottom: 20, borderWidth: 1, borderColor: '#f0f0f0', gap: 14 },
   infoItem:         { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },

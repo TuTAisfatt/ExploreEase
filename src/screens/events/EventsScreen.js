@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity,
   StyleSheet, ActivityIndicator, RefreshControl,
-  ScrollView, Image, Platform, Alert,
+  ScrollView, Image, Platform, Alert, TextInput,
 } from 'react-native';
 import { useAuth } from '../../context/AuthContext';
 import { getEvents, computeStatus, seedSampleEvents } from '../../services/eventService';
@@ -33,6 +33,12 @@ export default function EventsScreen({ navigation }) {
   const [activeStatus,    setActiveStatus]    = useState(null);
   const [showFreeOnly,    setShowFreeOnly]    = useState(false);
   const [searchQuery,     setSearchQuery]     = useState('');
+  const [now,             setNow]             = useState(Date.now());
+
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   const fetchEvents = useCallback(async () => {
     try {
@@ -82,6 +88,31 @@ export default function EventsScreen({ navigation }) {
       {/* ── Header ── */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Events</Text>
+        <TouchableOpacity
+          style={styles.createBtn}
+          onPress={() => navigation.navigate('CreateEvent')}
+        >
+          <Text style={styles.createBtnText}>+ Create</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* ── Search bar ── */}
+      <View style={styles.searchBar}>
+        <Text style={styles.searchIcon}>🔍</Text>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search events..."
+          placeholderTextColor="#aaa"
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+        {searchQuery.length > 0 && (
+          <TouchableOpacity onPress={() => setSearchQuery('')}>
+            <Text style={styles.searchClear}>✕</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* ── Status filter tabs ── */}
@@ -164,6 +195,7 @@ export default function EventsScreen({ navigation }) {
           renderItem={({ item }) => (
             <EventCard
               item={item}
+              now={now}
               onPress={() => navigation.navigate('EventDetail', { eventId: item.id })}
             />
           )}
@@ -193,7 +225,7 @@ export default function EventsScreen({ navigation }) {
 }
 
 // ── Event card ─────────────────────────────────────────────
-function EventCard({ item, onPress }) {
+function EventCard({ item, onPress, now }) {
   const status = computeStatus(item);
 
   const startDate = item.startDate?.toDate?.() ?? new Date(item.startDate?.seconds * 1000);
@@ -203,6 +235,19 @@ function EventCard({ item, onPress }) {
   const timeStr = startDate.toLocaleTimeString('en-US', {
     hour: '2-digit', minute: '2-digit',
   });
+
+  // Live countdown
+  const msLeft   = startDate.getTime() - now;
+  const daysLeft  = Math.floor(msLeft / (1000 * 60 * 60 * 24));
+  const hoursLeft = Math.floor((msLeft % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+  const minsLeft  = Math.floor((msLeft % (1000 * 60 * 60)) / (1000 * 60));
+  const secsLeft  = Math.floor((msLeft % (1000 * 60)) / 1000);
+
+  const countdownStr = daysLeft > 0
+    ? `${daysLeft}d ${hoursLeft}h ${minsLeft}m ${secsLeft}s`
+    : hoursLeft > 0
+    ? `${hoursLeft}h ${minsLeft}m ${secsLeft}s`
+    : `${minsLeft}m ${secsLeft}s`;
 
   const statusColors = {
     incoming:  { bg: '#E1F5EE', text: '#0F6E56', label: 'Upcoming'  },
@@ -241,6 +286,14 @@ function EventCard({ item, onPress }) {
         <Text style={styles.cardAddress} numberOfLines={1}>
           📍 {item.address}
         </Text>
+
+        {/* Countdown for upcoming events */}
+        {status === 'incoming' && msLeft > 0 && (
+          <View style={styles.cardCountdown}>
+            <Text style={styles.cardCountdownText}>⏳ {countdownStr}</Text>
+          </View>
+        )}
+
         <View style={styles.cardMeta}>
           <Text style={styles.cardDate}>📅 {dateStr}</Text>
           <Text style={styles.cardTime}>🕐 {timeStr}</Text>
@@ -258,8 +311,10 @@ function EventCard({ item, onPress }) {
 const styles = StyleSheet.create({
   container:          { flex: 1, backgroundColor: '#f9fafb' },
 
-  header:             { paddingHorizontal: 20, paddingTop: 56, paddingBottom: 12 },
+  header:        { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingTop: 56, paddingBottom: 12 },
   headerTitle:        { fontSize: 22, fontWeight: '700', color: '#1a1a1a' },
+  createBtn:     { backgroundColor: '#1D9E75', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8 },
+  createBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
 
   statusTabs:         { paddingHorizontal: 20, gap: 8, paddingVertical: 10, alignItems: 'center' },
   statusTab:          { paddingHorizontal: 16, borderRadius: 20, backgroundColor: '#fff', borderWidth: 1, borderColor: '#e0e0e0', height: 34, justifyContent: 'center', alignItems: 'center' },
@@ -304,4 +359,11 @@ const styles = StyleSheet.create({
   cardTime:           { fontSize: 12, color: '#555' },
   attendeesBadge:     { marginLeft: 'auto', backgroundColor: '#f5f5f5', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
   attendeesText:      { fontSize: 12, color: '#555', fontWeight: '500' },
+
+  searchBar:          { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', marginHorizontal: 20, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1, borderColor: '#e0e0e0', marginBottom: 10, gap: 8 },
+  searchIcon:         { fontSize: 15 },
+  searchInput:        { flex: 1, fontSize: 14, color: '#1a1a1a' },
+  searchClear:        { fontSize: 14, color: '#aaa', padding: 2 },
+  cardCountdown:      { backgroundColor: '#E1F5EE', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4, marginBottom: 8, alignSelf: 'flex-start' },
+  cardCountdownText:  { fontSize: 12, color: '#0F6E56', fontWeight: '700' },
 });
