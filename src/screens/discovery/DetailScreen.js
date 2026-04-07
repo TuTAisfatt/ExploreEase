@@ -59,8 +59,11 @@ export default function DetailScreen({ route, navigation }) {
   const [myRating,    setMyRating]    = useState(0);
   const [reviewText,  setReviewText]  = useState('');
   const [submitting,  setSubmitting]  = useState(false);
-  const [reviewsSort,  setReviewsSort]  = useState('newest');
-  const [similarItems, setSimilarItems] = useState([]);
+  const [reviewsSort,    setReviewsSort]    = useState('newest');
+  const [similarItems,   setSimilarItems]   = useState([]);
+  const [reviewsPage,    setReviewsPage]    = useState(1);
+  const [hasMoreReviews, setHasMoreReviews] = useState(false);
+  const REVIEWS_PAGE_SIZE = 5;
 
   // ── Load attraction + reviews + bookmark status ──────────
   useEffect(() => {
@@ -71,7 +74,8 @@ export default function DetailScreen({ route, navigation }) {
         if (snap.exists()) setItem({ id: snap.id, ...snap.data() });
 
         const { items } = await getReviews({ targetId: itemId, sortBy: reviewsSort });
-        setReviews(items);
+        setReviews(items.slice(0, REVIEWS_PAGE_SIZE));
+        setHasMoreReviews(items.length > REVIEWS_PAGE_SIZE);
 
         if (user) {
           const bookmarks = await getBookmarks(user.uid);
@@ -111,7 +115,11 @@ export default function DetailScreen({ route, navigation }) {
   useEffect(() => {
     if (!itemId) return;
     getReviews({ targetId: itemId, sortBy: reviewsSort })
-      .then(({ items }) => setReviews(items))
+      .then(({ items }) => {
+        setReviewsPage(1);
+        setReviews(items.slice(0, REVIEWS_PAGE_SIZE));
+        setHasMoreReviews(items.length > REVIEWS_PAGE_SIZE);
+      })
       .catch(console.error);
   }, [reviewsSort]);
 
@@ -167,7 +175,9 @@ export default function DetailScreen({ route, navigation }) {
       });
       // Refresh reviews
       const { items } = await getReviews({ targetId: itemId, sortBy: reviewsSort });
-      setReviews(items);
+      setReviewsPage(1);
+      setReviews(items.slice(0, REVIEWS_PAGE_SIZE));
+      setHasMoreReviews(items.length > REVIEWS_PAGE_SIZE);
       // Refresh item to get updated rating
       const collectionName = type === 'attraction' ? 'attractions' : 'events';
       const snap = await getDoc(doc(db, collectionName, itemId));
@@ -180,6 +190,19 @@ export default function DetailScreen({ route, navigation }) {
       Alert.alert('Error', 'Could not post review. Please try again.');
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  // ── Load more reviews ────────────────────────────────────
+  async function handleLoadMoreReviews() {
+    try {
+      const { items } = await getReviews({ targetId: itemId, sortBy: reviewsSort });
+      const nextPage = reviewsPage + 1;
+      setReviews(items.slice(0, nextPage * REVIEWS_PAGE_SIZE));
+      setReviewsPage(nextPage);
+      setHasMoreReviews(items.length > nextPage * REVIEWS_PAGE_SIZE);
+    } catch (e) {
+      console.error('Load more reviews error:', e);
     }
   }
 
@@ -448,13 +471,23 @@ export default function DetailScreen({ route, navigation }) {
               </Text>
             </View>
           ) : (
-            reviews.map(review => (
-              <ReviewItem
-                key={review.id}
-                review={review}
-                onFlag={() => handleFlagReview(review.id)}
-              />
-            ))
+            <>
+              {reviews.map(review => (
+                <ReviewItem
+                  key={review.id}
+                  review={review}
+                  onFlag={() => handleFlagReview(review.id)}
+                />
+              ))}
+              {hasMoreReviews && (
+                <TouchableOpacity
+                  style={styles.loadMoreReviews}
+                  onPress={handleLoadMoreReviews}
+                >
+                  <Text style={styles.loadMoreReviewsText}>Load more reviews</Text>
+                </TouchableOpacity>
+              )}
+            </>
           )}
         </View>
 
@@ -669,4 +702,7 @@ const styles = StyleSheet.create({
   openBadgeText:       { fontSize: 13, fontWeight: '700' },
   openBadgeTextOpen:   { color: '#0F6E56' },
   openBadgeTextClosed: { color: '#A32D2D' },
+
+  loadMoreReviews:     { backgroundColor: '#f5f5f5', borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginTop: 8 },
+  loadMoreReviewsText: { fontSize: 13, color: '#1D9E75', fontWeight: '600' },
 });

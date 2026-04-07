@@ -24,27 +24,38 @@ export default function HomeScreen({ navigation }) {
   const [loading,        setLoading]        = useState(true);
   const [refreshing,     setRefreshing]     = useState(false);
   const [seeding,        setSeeding]        = useState(false);
+  const [page,           setPage]           = useState(0);
+  const [hasMore,        setHasMore]        = useState(true);
+  const [loadingMore,    setLoadingMore]    = useState(false);
   const [bookmarks,      setBookmarks]      = useState([]);
   const [showBookmarks,  setShowBookmarks]  = useState(false);
 
   // ── Fetch nearby attractions ─────────────────────────────
-  const fetchAttractions = useCallback(async () => {
+  const PAGE_SIZE = 10;
+
+  const fetchAttractions = useCallback(async (reset = false) => {
     if (!region) return;
     try {
       const data = await getNearbyAttractions(
         region.latitude, region.longitude, 50
       );
-      // Sort by distance closest to farthest
       const sorted = data.sort((a, b) => (a.distance ?? 999) - (b.distance ?? 999));
       setAttractions(sorted);
-      setFiltered(sorted);
+
+      // Paginate client-side
+      const currentPage = reset ? 0 : page;
+      const slice = sorted.slice(0, (currentPage + 1) * PAGE_SIZE);
+      setFiltered(slice);
+      setPage(reset ? 1 : currentPage + 1);
+      setHasMore(sorted.length > (currentPage + 1) * PAGE_SIZE);
     } catch (e) {
       console.error('Failed to fetch attractions:', e);
     } finally {
       setLoading(false);
       setRefreshing(false);
+      setLoadingMore(false);
     }
-  }, [region]);
+  }, [region, page]);
 
   useEffect(() => {
     if (region) fetchAttractions();
@@ -52,20 +63,31 @@ export default function HomeScreen({ navigation }) {
 
   // ── Filter by category ────────────────────────────────────
   useEffect(() => {
-    if (!activeCategory) {
-      setFiltered([...attractions].sort((a, b) => (a.distance ?? 999) - (b.distance ?? 999)));
-    } else {
-      setFiltered(
-        attractions
-          .filter(a => a.category === activeCategory)
-          .sort((a, b) => (a.distance ?? 999) - (b.distance ?? 999))
-      );
-    }
+    const source = activeCategory
+      ? attractions.filter(a => a.category === activeCategory)
+      : attractions;
+    const sorted = [...source].sort((a, b) => (a.distance ?? 999) - (b.distance ?? 999));
+    setPage(1);
+    setHasMore(sorted.length > PAGE_SIZE);
+    setFiltered(sorted.slice(0, PAGE_SIZE));
   }, [activeCategory, attractions]);
 
   function handleRefresh() {
     setRefreshing(true);
-    fetchAttractions();
+    setPage(0);
+    setHasMore(true);
+    fetchAttractions(true);
+  }
+
+  function handleLoadMore() {
+    if (!hasMore || loadingMore || loading) return;
+    setLoadingMore(true);
+    const nextPage = page + 1;
+    const slice = attractions.slice(0, nextPage * PAGE_SIZE);
+    setFiltered(slice);
+    setPage(nextPage);
+    setHasMore(attractions.length > nextPage * PAGE_SIZE);
+    setLoadingMore(false);
   }
 
   async function handleSeed() {
@@ -284,15 +306,30 @@ export default function HomeScreen({ navigation }) {
             </TouchableOpacity>
           </View>
         ) : (
-          filtered.map(item => (
-            <AttractionCard
-              key={item.id}
-              item={item}
-              userLat={region?.latitude}
-              userLng={region?.longitude}
-              onPress={() => handleAttractionPress(item)}
-            />
-          ))
+          <>
+            {filtered.map(item => (
+              <AttractionCard
+                key={item.id}
+                item={item}
+                userLat={region?.latitude}
+                userLng={region?.longitude}
+                onPress={() => handleAttractionPress(item)}
+              />
+            ))}
+            {loadingMore && (
+              <View style={styles.loadingMore}>
+                <ActivityIndicator size="small" color="#1D9E75" />
+              </View>
+            )}
+            {hasMore && !loadingMore && filtered.length > 0 && (
+              <TouchableOpacity
+                style={styles.loadMoreBtn}
+                onPress={handleLoadMore}
+              >
+                <Text style={styles.loadMoreBtnText}>Load more places</Text>
+              </TouchableOpacity>
+            )}
+          </>
         )}
 
         <View style={{ height: 32 }} />
@@ -544,6 +581,10 @@ const styles = StyleSheet.create({
   bookmarkBadge:          { alignSelf: 'flex-start', backgroundColor: '#E1F5EE', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
   bookmarkBadgeEvent:     { backgroundColor: '#FFF3E0' },
   bookmarkBadgeText:      { fontSize: 11, color: '#0F6E56', fontWeight: '600' },
+
+  loadingMore:     { paddingVertical: 16, alignItems: 'center' },
+  loadMoreBtn:     { marginHorizontal: 20, marginBottom: 16, backgroundColor: '#fff', borderRadius: 12, paddingVertical: 12, alignItems: 'center', borderWidth: 1, borderColor: '#e0e0e0' },
+  loadMoreBtnText: { fontSize: 14, color: '#1D9E75', fontWeight: '600' },
 });
 
 const hStyles = StyleSheet.create({

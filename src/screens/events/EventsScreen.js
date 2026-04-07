@@ -33,6 +33,9 @@ export default function EventsScreen({ navigation }) {
   const [activeStatus,    setActiveStatus]    = useState(null);
   const [showFreeOnly,    setShowFreeOnly]    = useState(false);
   const [searchQuery,     setSearchQuery]     = useState('');
+  const [lastDoc,         setLastDoc]         = useState(null);
+  const [hasMore,         setHasMore]         = useState(true);
+  const [loadingMore,     setLoadingMore]     = useState(false);
   const [now,             setNow]             = useState(Date.now());
 
   useEffect(() => {
@@ -40,23 +43,36 @@ export default function EventsScreen({ navigation }) {
     return () => clearInterval(interval);
   }, []);
 
-  const fetchEvents = useCallback(async () => {
+  const fetchEvents = useCallback(async (reset = false) => {
     try {
-      const { items } = await getEvents({});
-      setEvents(items);
+      const { items, lastDoc: newLastDoc } = await getEvents({
+        lastDoc: reset ? null : lastDoc,
+      });
+      setEvents(prev => reset ? items : [...prev, ...items]);
+      setLastDoc(newLastDoc);
+      setHasMore(items.length >= 10);
     } catch (e) {
       console.error('fetchEvents error:', e);
     } finally {
       setLoading(false);
       setRefreshing(false);
+      setLoadingMore(false);
     }
-  }, []);
+  }, [lastDoc]);
 
-  useEffect(() => { fetchEvents(); }, []);
+  useEffect(() => { fetchEvents(true); }, []);
 
   function handleRefresh() {
     setRefreshing(true);
-    fetchEvents();
+    setLastDoc(null);
+    setHasMore(true);
+    fetchEvents(true);
+  }
+
+  function handleLoadMore() {
+    if (!hasMore || loadingMore || loading) return;
+    setLoadingMore(true);
+    fetchEvents(false);
   }
 
   async function handleSeed() {
@@ -199,6 +215,19 @@ export default function EventsScreen({ navigation }) {
               onPress={() => navigation.navigate('EventDetail', { eventId: item.id })}
             />
           )}
+          onEndReached={handleLoadMore}
+          onEndReachedThreshold={0.3}
+          ListFooterComponent={
+            loadingMore ? (
+              <View style={styles.loadingMore}>
+                <ActivityIndicator size="small" color="#1D9E75" />
+              </View>
+            ) : hasMore && filtered.length > 0 ? (
+              <View style={styles.loadingMore}>
+                <Text style={styles.loadingMoreText}>Scroll for more</Text>
+              </View>
+            ) : null
+          }
           ListEmptyComponent={
             <View style={styles.emptyWrap}>
               <Text style={styles.emptyEmoji}>🗓️</Text>
@@ -366,4 +395,6 @@ const styles = StyleSheet.create({
   searchClear:        { fontSize: 14, color: '#aaa', padding: 2 },
   cardCountdown:      { backgroundColor: '#E1F5EE', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4, marginBottom: 8, alignSelf: 'flex-start' },
   cardCountdownText:  { fontSize: 12, color: '#0F6E56', fontWeight: '700' },
+  loadingMore:        { paddingVertical: 16, alignItems: 'center' },
+  loadingMoreText:    { fontSize: 12, color: '#aaa' },
 });
