@@ -10,6 +10,11 @@ import MapScreen    from '../screens/discovery/MapScreen';
 import SearchScreen from '../screens/discovery/SearchScreen';
 import DetailScreen from '../screens/discovery/DetailScreen';
 
+// ── Events screens ──
+import EventsScreen      from '../screens/events/EventsScreen';
+import EventDetailScreen from '../screens/events/EventDetailScreen';
+import CreateEventScreen from '../screens/events/CreateEventScreen';
+
 // ── Auth & Profile screens (fully built) ──
 import ProfileScreen     from '../screens/profile/ProfileScreen';
 import EditProfileScreen from '../screens/profile/EditProfileScreen';
@@ -47,9 +52,9 @@ function DiscoverStack() {
 function EventsStack() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="EventsHome"  component={Placeholder} />
-      <Stack.Screen name="EventDetail" component={Placeholder} />
-      <Stack.Screen name="CreateEvent" component={Placeholder} />
+      <Stack.Screen name="EventsHome"  component={EventsScreen} />
+      <Stack.Screen name="EventDetail" component={EventDetailScreen} />
+      <Stack.Screen name="CreateEvent" component={CreateEventScreen} />
     </Stack.Navigator>
   );
 }

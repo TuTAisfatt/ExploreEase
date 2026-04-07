@@ -4,6 +4,8 @@ import {
   StyleSheet, ActivityIndicator, RefreshControl,
   ScrollView, Image,
 } from 'react-native';
+import { collection, getDocs, query, where } from 'firebase/firestore';
+import { db } from '../../config/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { useLocation } from '../../hooks/useLocation';
 import { useRecommendations } from '../../hooks/useRecommendations';
@@ -22,6 +24,8 @@ export default function HomeScreen({ navigation }) {
   const [loading,        setLoading]        = useState(true);
   const [refreshing,     setRefreshing]     = useState(false);
   const [seeding,        setSeeding]        = useState(false);
+  const [bookmarks,      setBookmarks]      = useState([]);
+  const [showBookmarks,  setShowBookmarks]  = useState(false);
 
   // ── Fetch nearby attractions ─────────────────────────────
   const fetchAttractions = useCallback(async () => {
@@ -71,6 +75,23 @@ export default function HomeScreen({ navigation }) {
     setSeeding(false);
   }
 
+  const fetchBookmarks = useCallback(async () => {
+    if (!user) return;
+    try {
+      const q = query(
+        collection(db, 'bookmarks'),
+        where('userId', '==', user.uid)
+      );
+      const snap = await getDocs(q);
+      const items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setBookmarks(items);
+    } catch (e) {
+      console.error('fetchBookmarks error:', e);
+    }
+  }, [user]);
+
+  useEffect(() => { fetchBookmarks(); }, [fetchBookmarks]);
+
   // ── Navigate to detail + track activity ──────────────────
   function handleAttractionPress(item) {
     if (user) trackActivity(user.uid, item.id, 'view');
@@ -91,12 +112,23 @@ export default function HomeScreen({ navigation }) {
           <Text style={styles.greeting}>{greeting}</Text>
           <Text style={styles.subGreeting}>Where do you want to go today?</Text>
         </View>
-        <TouchableOpacity
-          style={styles.notifBtn}
-          onPress={() => navigation.navigate('Notifications')}
-        >
-          <Text style={styles.notifIcon}>🔔</Text>
-        </TouchableOpacity>
+        <View style={styles.headerIcons}>
+          <TouchableOpacity
+            style={styles.iconBtn}
+            onPress={() => {
+              fetchBookmarks();
+              setShowBookmarks(true);
+            }}
+          >
+            <Text style={styles.notifIcon}>🔖</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.iconBtn}
+            onPress={() => navigation.navigate('Notifications')}
+          >
+            <Text style={styles.notifIcon}>🔔</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView
@@ -265,6 +297,73 @@ export default function HomeScreen({ navigation }) {
 
         <View style={{ height: 32 }} />
       </ScrollView>
+
+      {/* ── Bookmarks modal ── */}
+      {showBookmarks && (
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalSheet}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>🔖 My Bookmarks</Text>
+              <TouchableOpacity onPress={() => setShowBookmarks(false)}>
+                <Text style={styles.modalClose}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            {bookmarks.length === 0 ? (
+              <View style={styles.modalEmpty}>
+                <Text style={styles.emptyEmoji}>🔖</Text>
+                <Text style={styles.emptyTitle}>No bookmarks yet</Text>
+                <Text style={styles.emptySubtitle}>
+                  Save places and events to see them here
+                </Text>
+              </View>
+            ) : (
+              <ScrollView showsVerticalScrollIndicator={false}>
+                {bookmarks.map(item => (
+                  <TouchableOpacity
+                    key={item.id}
+                    style={styles.bookmarkItem}
+                    onPress={() => {
+                      setShowBookmarks(false);
+                      navigation.navigate('Detail', {
+                        itemId: item.itemId ?? item.id,
+                        type: item.type ?? 'attraction',
+                      });
+                    }}
+                  >
+                    {item.imageUrl ? (
+                      <Image
+                        source={{ uri: item.imageUrl }}
+                        style={styles.bookmarkImage}
+                        resizeMode="cover"
+                      />
+                    ) : (
+                      <View style={[styles.bookmarkImage, styles.bookmarkImagePlaceholder]}>
+                        <Text style={{ fontSize: 20 }}>🏙️</Text>
+                      </View>
+                    )}
+                    <View style={styles.bookmarkInfo}>
+                      <Text style={styles.bookmarkName} numberOfLines={1}>
+                        {item.name ?? 'Unknown place'}
+                      </Text>
+                      <Text style={styles.bookmarkAddress} numberOfLines={1}>
+                        📍 {item.address ?? 'No address'}
+                      </Text>
+                      <View style={[
+                        styles.bookmarkBadge,
+                        item.type === 'event' && styles.bookmarkBadgeEvent
+                      ]}>
+                        <Text style={styles.bookmarkBadgeText}>
+                          {item.type === 'event' ? '📅 Event' : '📍 Place'}
+                        </Text>
+                      </View>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      )}
     </View>
   );
 }
@@ -425,6 +524,26 @@ const styles = StyleSheet.create({
   metaText:           { fontSize: 13, color: '#444', fontWeight: '500' },
   metaCount:          { fontSize: 12, color: '#aaa' },
   metaPrice:          { fontSize: 13, color: '#1D9E75', fontWeight: '700' },
+
+  headerIcons:            { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  iconBtn:                { padding: 8 },
+
+  modalOverlay:           { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end', zIndex: 100 },
+  modalSheet:             { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 20, paddingBottom: 40, maxHeight: '80%' },
+  modalHeader:            { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 16 },
+  modalTitle:             { fontSize: 17, fontWeight: '700', color: '#1a1a1a' },
+  modalClose:             { fontSize: 18, color: '#aaa', padding: 4 },
+  modalEmpty:             { alignItems: 'center', paddingVertical: 40, gap: 8 },
+
+  bookmarkItem:           { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#f0f0f0', gap: 12 },
+  bookmarkImage:          { width: 64, height: 64, borderRadius: 10 },
+  bookmarkImagePlaceholder: { backgroundColor: '#f5f5f5', justifyContent: 'center', alignItems: 'center' },
+  bookmarkInfo:           { flex: 1 },
+  bookmarkName:           { fontSize: 14, fontWeight: '700', color: '#1a1a1a', marginBottom: 3 },
+  bookmarkAddress:        { fontSize: 12, color: '#888', marginBottom: 6 },
+  bookmarkBadge:          { alignSelf: 'flex-start', backgroundColor: '#E1F5EE', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
+  bookmarkBadgeEvent:     { backgroundColor: '#FFF3E0' },
+  bookmarkBadgeText:      { fontSize: 11, color: '#0F6E56', fontWeight: '600' },
 });
 
 const hStyles = StyleSheet.create({

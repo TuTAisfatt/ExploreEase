@@ -14,6 +14,39 @@ import { getSimilarAttractions, trackActivity } from '../../services/recommendat
 import { useLocation } from '../../hooks/useLocation';
 import StarRating from '../../components/StarRating';
 
+// ── Check if attraction is currently open ─────────────────
+function isOpenNow(hours) {
+  if (!hours) return null;
+
+  try {
+    // Parse format like "6:00 AM – 6:00 PM" or "7:30 AM – 6:00 PM"
+    const parts = hours.split('–').map(s => s.trim());
+    if (parts.length !== 2) return null;
+
+    const toMinutes = (timeStr) => {
+      const [time, period] = timeStr.trim().split(' ');
+      let [h, m] = time.split(':').map(Number);
+      if (period === 'PM' && h !== 12) h += 12;
+      if (period === 'AM' && h === 12) h = 0;
+      return h * 60 + m;
+    };
+
+    const now        = new Date();
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+    const openMin    = toMinutes(parts[0]);
+    const closeMin   = toMinutes(parts[1]);
+
+    // Handle overnight hours (e.g. 5:00 PM – 2:00 AM)
+    if (closeMin < openMin) {
+      return nowMinutes >= openMin || nowMinutes < closeMin;
+    }
+
+    return nowMinutes >= openMin && nowMinutes < closeMin;
+  } catch (e) {
+    return null;
+  }
+}
+
 export default function DetailScreen({ route, navigation }) {
   const { itemId, type } = route.params;
   const { user, userProfile } = useAuth();
@@ -89,7 +122,7 @@ export default function DetailScreen({ route, navigation }) {
       if (bookmarked) {
         await removeBookmark(user.uid, itemId);
       } else {
-        await addBookmark(user.uid, itemId, type);
+        await addBookmark(user.uid, itemId, type, item);
       }
       setBookmarked(!bookmarked);
     } catch (e) {
@@ -268,10 +301,33 @@ export default function DetailScreen({ route, navigation }) {
         )}
 
         {/* ── Info grid ── */}
+        {item.hours && (
+          <View style={styles.infoGrid}>
+            <View style={styles.infoItem}>
+              <Text style={styles.infoIcon}>🕐</Text>
+              <View>
+                <Text style={styles.infoLabel}>Hours</Text>
+                <Text style={styles.infoValue}>{item.hours}</Text>
+              </View>
+            </View>
+
+            {/* Open/Closed status badge */}
+            {isOpenNow(item.hours) !== null && (
+              <View style={[
+                styles.openBadge,
+                isOpenNow(item.hours) ? styles.openBadgeOpen : styles.openBadgeClosed,
+              ]}>
+                <Text style={[
+                  styles.openBadgeText,
+                  isOpenNow(item.hours) ? styles.openBadgeTextOpen : styles.openBadgeTextClosed,
+                ]}>
+                  {isOpenNow(item.hours) ? '✅ Open now' : '🔴 Closed now'}
+                </Text>
+              </View>
+            )}
+          </View>
+        )}
         <View style={styles.infoGrid}>
-          {item.hours && (
-            <InfoItem icon="🕐" label="Hours" value={item.hours} />
-          )}
           {item.priceLevel !== undefined && (
             <InfoItem
               icon="💰"
@@ -606,4 +662,11 @@ const styles = StyleSheet.create({
   similarBadge:            { backgroundColor: '#E1F5EE', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
   similarBadgeText:        { fontSize: 10, color: '#0F6E56', fontWeight: '700', textTransform: 'capitalize' },
   similarRating:           { fontSize: 11, color: '#888' },
+
+  openBadge:           { justifyContent: 'center', alignItems: 'center', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, flex: 1, borderWidth: 1 },
+  openBadgeOpen:       { backgroundColor: '#E1F5EE', borderColor: '#1D9E75' },
+  openBadgeClosed:     { backgroundColor: '#FCEBEB', borderColor: '#E24B4A' },
+  openBadgeText:       { fontSize: 13, fontWeight: '700' },
+  openBadgeTextOpen:   { color: '#0F6E56' },
+  openBadgeTextClosed: { color: '#A32D2D' },
 });

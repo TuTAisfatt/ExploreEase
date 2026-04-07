@@ -10,9 +10,10 @@ import { getDistance, formatDistance } from '../../services/locationService';
 import { INTEREST_TAGS } from '../../utils/constants';
 
 const SORT_OPTIONS = [
-  { id: 'distance',  label: '📏 Nearest'    },
-  { id: 'rating',    label: '⭐ Top rated'  },
-  { id: 'name',      label: '🔤 A–Z'        },
+  { id: 'distance',   label: '📏 Nearest'    },
+  { id: 'rating',     label: '⭐ Top rated'  },
+  { id: 'popularity', label: '🔥 Popular'    },
+  { id: 'name',       label: '🔤 A–Z'        },
 ];
 
 const PRICE_OPTIONS = [
@@ -35,6 +36,8 @@ export default function SearchScreen({ navigation }) {
   const [sortBy,         setSortBy]         = useState('distance');
   const [priceFilter,    setPriceFilter]    = useState(null);
   const [showFilters,    setShowFilters]    = useState(false);
+  const [suggestions,    setSuggestions]    = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
 
   // ── Load all attractions once ────────────────────────────
   useEffect(() => {
@@ -101,6 +104,9 @@ export default function SearchScreen({ navigation }) {
         const rB = b.reviewCount ? b.ratingSum / b.reviewCount : 0;
         return rB - rA;
       }
+      if (sortBy === 'popularity') {
+        return (b.reviewCount ?? 0) - (a.reviewCount ?? 0);
+      }
       if (sortBy === 'name') {
         return (a.name ?? '').localeCompare(b.name ?? '');
       }
@@ -129,18 +135,67 @@ export default function SearchScreen({ navigation }) {
             placeholder="Search attractions, food, culture..."
             placeholderTextColor="#aaa"
             value={query}
-            onChangeText={setQuery}
+            onChangeText={text => {
+              setQuery(text);
+              // Generate suggestions from attraction names
+              if (text.trim().length > 0) {
+                const q = text.trim().toLowerCase();
+                const matches = allAttractions
+                  .filter(a => a.name?.toLowerCase().startsWith(q))
+                  .slice(0, 4)
+                  .map(a => a.name);
+                setSuggestions(matches);
+                setShowSuggestions(matches.length > 0);
+              } else {
+                setSuggestions([]);
+                setShowSuggestions(false);
+              }
+            }}
             autoCapitalize="none"
             autoCorrect={false}
             returnKeyType="search"
-            onSubmitEditing={Keyboard.dismiss}
+            onSubmitEditing={() => {
+              Keyboard.dismiss();
+              setShowSuggestions(false);
+            }}
+            onFocus={() => {
+              if (suggestions.length > 0) setShowSuggestions(true);
+            }}
           />
           {query.length > 0 && (
-            <TouchableOpacity onPress={() => setQuery('')}>
+            <TouchableOpacity onPress={() => {
+              setQuery('');
+              setSuggestions([]);
+              setShowSuggestions(false);
+            }}>
               <Text style={styles.clearIcon}>✕</Text>
             </TouchableOpacity>
           )}
         </View>
+
+        {/* Autocomplete suggestions dropdown */}
+        {showSuggestions && (
+          <View style={styles.suggestionsBox}>
+            {suggestions.map((suggestion, index) => (
+              <TouchableOpacity
+                key={index}
+                style={[
+                  styles.suggestionItem,
+                  index < suggestions.length - 1 && styles.suggestionBorder,
+                ]}
+                onPress={() => {
+                  setQuery(suggestion);
+                  setSuggestions([]);
+                  setShowSuggestions(false);
+                  Keyboard.dismiss();
+                }}
+              >
+                <Text style={styles.suggestionIcon}>🔍</Text>
+                <Text style={styles.suggestionText}>{suggestion}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
 
         {/* Filter toggle */}
         <TouchableOpacity
@@ -337,6 +392,11 @@ const styles = StyleSheet.create({
   searchIcon:      { fontSize: 15 },
   input:           { flex: 1, fontSize: 15, color: '#1a1a1a' },
   clearIcon:       { fontSize: 14, color: '#aaa', padding: 2 },
+  suggestionsBox:   { backgroundColor: '#fff', marginHorizontal: 16, borderRadius: 12, borderWidth: 1, borderColor: '#e0e0e0', marginTop: 4, overflow: 'hidden', zIndex: 999 },
+  suggestionItem:   { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 10 },
+  suggestionBorder: { borderBottomWidth: 1, borderBottomColor: '#f5f5f5' },
+  suggestionIcon:   { fontSize: 14 },
+  suggestionText:   { fontSize: 15, color: '#1a1a1a' },
   filterBtn:       { backgroundColor: '#fff', borderRadius: 12, padding: 10, borderWidth: 1, borderColor: '#e0e0e0' },
   filterBtnActive: { backgroundColor: '#E1F5EE', borderColor: '#1D9E75' },
   filterBtnText:   { fontSize: 18 },

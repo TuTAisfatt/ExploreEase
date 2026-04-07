@@ -57,9 +57,15 @@ export async function uploadProfilePicture(userId, uri) {
   return url;
 }
 
-export async function addBookmark(userId, itemId, itemType) {
+export async function addBookmark(userId, itemId, itemType, itemData = {}) {
   await setDoc(doc(db, 'bookmarks', `${userId}_${itemId}`), {
-    userId, itemId, itemType, createdAt: serverTimestamp(),
+    userId,
+    itemId,
+    itemType,
+    name:     itemData.name     ?? itemData.title   ?? '',
+    address:  itemData.address  ?? '',
+    imageUrl: itemData.images?.[0] ?? itemData.imageUrl ?? '',
+    createdAt: serverTimestamp(),
   });
 }
 
