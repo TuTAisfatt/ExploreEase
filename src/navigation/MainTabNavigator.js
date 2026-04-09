@@ -19,6 +19,7 @@ import CreateEventScreen from '../screens/events/CreateEventScreen';
 import ProfileScreen     from '../screens/profile/ProfileScreen';
 import EditProfileScreen from '../screens/profile/EditProfileScreen';
 import GDPRScreen        from '../screens/profile/GDPRScreen';
+import AdminDashboard    from '../screens/admin/AdminDashboard';
 
 // ── Placeholder for screens not built yet ──
 function Placeholder({ route }) {
@@ -71,9 +72,10 @@ function SocialStack() {
 function ProfileStack() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="ProfileHome"  component={ProfileScreen} />
-      <Stack.Screen name="EditProfile" component={EditProfileScreen} />
-      <Stack.Screen name="GDPR"        component={GDPRScreen} />
+      <Stack.Screen name="ProfileHome"     component={ProfileScreen} />
+      <Stack.Screen name="EditProfile"     component={EditProfileScreen} />
+      <Stack.Screen name="GDPR"            component={GDPRScreen} />
+      <Stack.Screen name="AdminDashboard"  component={AdminDashboard} />
     </Stack.Navigator>
   );
 }

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import * as ImagePicker from 'expo-image-picker';
 import {
   View, Text, ScrollView, Image, TouchableOpacity,
   StyleSheet, ActivityIndicator, Alert, Linking,
@@ -7,7 +8,7 @@ import {
 import { doc, getDoc, getDocs, collection } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { useAuth } from '../../context/AuthContext';
-import { getReviews, addReview, flagReview } from '../../services/reviewService';
+import { getReviews, addReview, flagReview, markHelpful, unmarkHelpful, replyToReview } from '../../services/reviewService';
 import { addBookmark, removeBookmark, getBookmarks } from '../../services/userService';
 import { formatDistance, getDistance } from '../../services/locationService';
 import { getSimilarAttractions, trackActivity } from '../../services/recommendationService';
@@ -58,12 +59,16 @@ export default function DetailScreen({ route, navigation }) {
   const [bookmarked,  setBookmarked]  = useState(false);
   const [myRating,    setMyRating]    = useState(0);
   const [reviewText,  setReviewText]  = useState('');
+  const [reviewPhoto, setReviewPhoto] = useState('');
   const [submitting,  setSubmitting]  = useState(false);
   const [reviewsSort,    setReviewsSort]    = useState('newest');
   const [similarItems,   setSimilarItems]   = useState([]);
   const [reviewsPage,    setReviewsPage]    = useState(1);
   const [hasMoreReviews, setHasMoreReviews] = useState(false);
   const REVIEWS_PAGE_SIZE = 5;
+  const [replyingTo,   setReplyingTo]   = useState(null);
+  const [replyText,    setReplyText]    = useState('');
+  const [replyingBusy, setReplyingBusy] = useState(false);
 
   // ── Load attraction + reviews + bookmark status ──────────
   useEffect(() => {
@@ -172,6 +177,7 @@ export default function DetailScreen({ route, navigation }) {
         userName:   userProfile?.name ?? 'Anonymous',
         rating:     myRating,
         text:       reviewText.trim(),
+        photoUrl:   reviewPhoto.trim() || null,
       });
       // Refresh reviews
       const { items } = await getReviews({ targetId: itemId, sortBy: reviewsSort });
@@ -185,11 +191,65 @@ export default function DetailScreen({ route, navigation }) {
 
       setMyRating(0);
       setReviewText('');
+      setReviewPhoto('');
       Alert.alert('Thanks!', 'Your review has been posted.');
     } catch (e) {
       Alert.alert('Error', 'Could not post review. Please try again.');
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  // ── Pick image from library ───────────────────────────────
+  async function handlePickImage() {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission needed', 'Please allow access to your photo library.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaType?.Images ?? ImagePicker.MediaTypeOptions?.Images ?? 'Images',
+      allowsEditing: true,
+      aspect: [4, 3],
+      quality: 0.7,
+      base64: Platform.OS !== 'web',
+    });
+    if (!result.canceled) {
+      try {
+        setSubmitting(true);
+        const asset  = result.assets[0];
+        const mime   = asset.mimeType ?? 'image/jpeg';
+
+        const formData = new FormData();
+
+        if (Platform.OS === 'web') {
+          // On web, fetch the blob from the URI
+          const response = await fetch(asset.uri);
+          const blob     = await response.blob();
+          formData.append('file', blob);
+        } else {
+          // On native, use base64
+          formData.append('file', `data:${mime};base64,${asset.base64}`);
+        }
+
+        formData.append('upload_preset', 'exploreease_reviews');
+
+        const res  = await fetch(
+          'https://api.cloudinary.com/v1_1/dpmtwyqg6/image/upload',
+          { method: 'POST', body: formData }
+        );
+        const data = await res.json();
+        if (data.secure_url) {
+          setReviewPhoto(data.secure_url);
+        } else {
+          Alert.alert('Upload failed', 'Could not upload image. Try again.');
+        }
+      } catch (e) {
+        console.error('Image upload error:', e);
+        Alert.alert('Error', 'Could not upload image.');
+      } finally {
+        setSubmitting(false);
+      }
     }
   }
 
@@ -203,6 +263,60 @@ export default function DetailScreen({ route, navigation }) {
       setHasMoreReviews(items.length > nextPage * REVIEWS_PAGE_SIZE);
     } catch (e) {
       console.error('Load more reviews error:', e);
+    }
+  }
+
+  // ── Helpful toggle ────────────────────────────────────────
+  async function handleHelpful(review) {
+    if (!user) return Alert.alert('Sign in required');
+    const hasMarked = !!(review.helpfulBy && review.helpfulBy.includes(user.uid));
+    try {
+      // Optimistic update first
+      setReviews(prev => prev.map(r => {
+        if (r.id !== review.id) return r;
+        return {
+          ...r,
+          helpful:   (r.helpful ?? 0) + (hasMarked ? -1 : 1),
+          helpfulBy: hasMarked
+            ? (r.helpfulBy ?? []).filter(id => id !== user.uid)
+            : [...(r.helpfulBy ?? []), user.uid],
+        };
+      }));
+
+      // Then save to Firestore
+      if (hasMarked) {
+        await unmarkHelpful(review.id, user.uid);
+      } else {
+        await markHelpful(review.id, user.uid);
+      }
+    } catch (e) {
+      console.error('Helpful error:', e);
+      // Revert on error by refreshing
+      const { items } = await getReviews({ targetId: itemId, sortBy: reviewsSort });
+      setReviews(items.slice(0, reviewsPage * REVIEWS_PAGE_SIZE));
+    }
+  }
+
+  // ── Reply to review ───────────────────────────────────────
+  async function handleReply(reviewId) {
+    if (!replyText.trim()) return;
+    setReplyingBusy(true);
+    try {
+      await replyToReview(
+        reviewId,
+        replyText.trim(),
+        userProfile?.name ?? 'Owner'
+      );
+      setReplyingTo(null);
+      setReplyText('');
+      const { items } = await getReviews({ targetId: itemId, sortBy: reviewsSort });
+      setReviewsPage(1);
+      setReviews(items.slice(0, REVIEWS_PAGE_SIZE));
+      setHasMoreReviews(items.length > REVIEWS_PAGE_SIZE);
+    } catch (e) {
+      Alert.alert('Error', 'Could not post reply.');
+    } finally {
+      setReplyingBusy(false);
     }
   }
 
@@ -315,11 +429,13 @@ export default function DetailScreen({ route, navigation }) {
 
         {/* ── Rating summary ── */}
         {item.reviewCount > 0 && (
-          <View style={styles.ratingRow}>
-            <StarRating rating={avgRating} size={18} />
-            <Text style={styles.ratingText}>
-              {avgRating.toFixed(1)} · {item.reviewCount} review{item.reviewCount !== 1 ? 's' : ''}
-            </Text>
+          <View style={styles.ratingSection}>
+            <View style={styles.ratingRow}>
+              <StarRating rating={avgRating} size={18} />
+              <Text style={styles.ratingText}>
+                {avgRating.toFixed(1)} · {item.reviewCount} review{item.reviewCount !== 1 ? 's' : ''}
+              </Text>
+            </View>
           </View>
         )}
 
@@ -391,7 +507,7 @@ export default function DetailScreen({ route, navigation }) {
             <Text style={styles.sectionTitle}>Reviews</Text>
             {/* Sort options */}
             <View style={styles.sortRow}>
-              {['newest', 'top-rated'].map(opt => (
+              {['newest', 'top-rated', 'most-helpful'].map(opt => (
                 <TouchableOpacity
                   key={opt}
                   style={[
@@ -404,7 +520,7 @@ export default function DetailScreen({ route, navigation }) {
                     styles.sortChipText,
                     reviewsSort === opt && styles.sortChipTextActive,
                   ]}>
-                    {opt === 'newest' ? 'Newest' : 'Top rated'}
+                    {opt === 'newest' ? 'Newest' : opt === 'top-rated' ? 'Top rated' : 'Most helpful'}
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -447,6 +563,30 @@ export default function DetailScreen({ route, navigation }) {
                 value={reviewText}
                 onChange={setReviewText}
               />
+              {/* Photo picker */}
+              <TouchableOpacity
+                style={styles.photoPickerBtn}
+                onPress={handlePickImage}
+              >
+                <Text style={styles.photoPickerText}>
+                  {reviewPhoto ? '📷 Change photo' : '📷 Add photo (optional)'}
+                </Text>
+              </TouchableOpacity>
+              {reviewPhoto.trim().length > 0 && (
+                <View style={styles.reviewPhotoWrap}>
+                  <Image
+                    source={{ uri: reviewPhoto.trim() }}
+                    style={styles.reviewPhotoPreview}
+                    resizeMode="cover"
+                  />
+                  <TouchableOpacity
+                    style={styles.removePhotoBtn}
+                    onPress={() => setReviewPhoto('')}
+                  >
+                    <Text style={styles.removePhotoBtnText}>✕ Remove</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
               <TouchableOpacity
                 style={[
                   styles.submitReviewBtn,
@@ -463,6 +603,11 @@ export default function DetailScreen({ route, navigation }) {
             </View>
           )}
 
+          {/* ── Rating bars ── */}
+          {item.reviewCount > 0 && (
+            <RatingBars reviews={reviews} />
+          )}
+
           {/* Reviews list */}
           {reviews.length === 0 ? (
             <View style={styles.noReviews}>
@@ -476,7 +621,18 @@ export default function DetailScreen({ route, navigation }) {
                 <ReviewItem
                   key={review.id}
                   review={review}
+                  currentUserId={user?.uid}
                   onFlag={() => handleFlagReview(review.id)}
+                  onHelpful={() => handleHelpful(review)}
+                  canReply={
+                    user?.uid === item?.organizerId ||
+                    user?.uid === item?.createdBy ||
+                    false
+                  }
+                  onReply={() => {
+                    setReplyingTo(review.id);
+                    setReplyText('');
+                  }}
                 />
               ))}
               {hasMoreReviews && (
@@ -486,6 +642,48 @@ export default function DetailScreen({ route, navigation }) {
                 >
                   <Text style={styles.loadMoreReviewsText}>Load more reviews</Text>
                 </TouchableOpacity>
+              )}
+
+              {/* ── Reply input ── */}
+              {replyingTo && (
+                <View style={styles.replyInputBox}>
+                  <Text style={styles.replyInputTitle}>Replying to review</Text>
+                  <TextInput
+                    style={styles.replyInputField}
+                    placeholder="Write your reply..."
+                    placeholderTextColor="#aaa"
+                    value={replyText}
+                    onChangeText={setReplyText}
+                    multiline
+                    numberOfLines={3}
+                    textAlignVertical="top"
+                    autoFocus
+                  />
+                  <View style={styles.replyInputActions}>
+                    <TouchableOpacity
+                      style={styles.replyCancelBtn}
+                      onPress={() => {
+                        setReplyingTo(null);
+                        setReplyText('');
+                      }}
+                    >
+                      <Text style={styles.replyCancelBtnText}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[
+                        styles.replySubmitBtn,
+                        (!replyText.trim() || replyingBusy) && styles.replySubmitBtnDisabled,
+                      ]}
+                      onPress={() => handleReply(replyingTo)}
+                      disabled={!replyText.trim() || replyingBusy}
+                    >
+                      {replyingBusy
+                        ? <ActivityIndicator color="#fff" size="small" />
+                        : <Text style={styles.replySubmitBtnText}>Post Reply</Text>
+                      }
+                    </TouchableOpacity>
+                  </View>
+                </View>
               )}
             </>
           )}
@@ -551,6 +749,31 @@ export default function DetailScreen({ route, navigation }) {
 }
 
 
+function RatingBars({ reviews }) {
+  const counts = [5, 4, 3, 2, 1].map(star => ({
+    star,
+    count: reviews.filter(r => Math.round(r.rating) === star).length,
+  }));
+  const max = Math.max(...counts.map(c => c.count), 1);
+
+  return (
+    <View style={styles.ratingBars}>
+      {counts.map(({ star, count }) => (
+        <View key={star} style={styles.ratingBarRow}>
+          <Text style={styles.ratingBarLabel}>{star}★</Text>
+          <View style={styles.ratingBarTrack}>
+            <View style={[
+              styles.ratingBarFill,
+              { width: `${(count / max) * 100}%` },
+            ]} />
+          </View>
+          <Text style={styles.ratingBarCount}>{count}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 function ReviewTextInput({ value, onChange }) {
   return (
     <TextInput
@@ -580,7 +803,9 @@ function InfoItem({ icon, label, value }) {
 }
 
 // ── Review item ───────────────────────────────────────────
-function ReviewItem({ review, onFlag }) {
+function ReviewItem({ review, onFlag, onHelpful, currentUserId, canReply, onReply }) {
+  const hasMarked = !!(currentUserId && review.helpfulBy && review.helpfulBy.includes(currentUserId));
+
   return (
     <View style={styles.reviewItem}>
       <View style={styles.reviewHeader}>
@@ -597,10 +822,45 @@ function ReviewItem({ review, onFlag }) {
           <Text style={styles.flagBtnText}>⚑</Text>
         </TouchableOpacity>
       </View>
+
       <Text style={styles.reviewText}>{review.text}</Text>
+
+      {review.photoUrl && (
+        <Image
+          source={{ uri: review.photoUrl }}
+          style={styles.reviewPhoto}
+          resizeMode="cover"
+        />
+      )}
+
+      <View style={styles.reviewFooter}>
+        <TouchableOpacity
+          style={[styles.helpfulBtn, hasMarked && styles.helpfulBtnActive]}
+          onPress={onHelpful}
+        >
+          <Text style={[
+            styles.helpfulBtnText,
+            hasMarked && styles.helpfulBtnTextActive,
+          ]}>
+            👍 Helpful {review.helpful > 0 ? `(${review.helpful})` : ''}
+          </Text>
+        </TouchableOpacity>
+
+        {canReply && !review.reply && (
+          <TouchableOpacity
+            style={styles.replyBtn}
+            onPress={onReply}
+          >
+            <Text style={styles.replyBtnText}>↩ Reply</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
       {review.reply && (
         <View style={styles.replyBox}>
-          <Text style={styles.replyLabel}>Reply from owner:</Text>
+          <Text style={styles.replyLabel}>
+            Reply from {review.replierName ?? 'owner'}:
+          </Text>
           <Text style={styles.replyText}>{review.reply}</Text>
         </View>
       )}
@@ -632,8 +892,15 @@ const styles = StyleSheet.create({
   name:             { fontSize: 24, fontWeight: '700', color: '#1a1a1a', marginBottom: 6 },
   address:          { fontSize: 14, color: '#888', marginBottom: 12 },
 
-  ratingRow:        { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 },
-  ratingText:       { fontSize: 14, color: '#555', fontWeight: '500' },
+  ratingSection:        { marginBottom: 16 },
+  ratingRow:            { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  ratingText:           { fontSize: 14, color: '#555', fontWeight: '500' },
+  ratingBars:           { marginTop: 10, gap: 4 },
+  ratingBarRow:         { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  ratingBarLabel:       { fontSize: 12, color: '#555', width: 24 },
+  ratingBarTrack:       { flex: 1, height: 8, backgroundColor: '#f0f0f0', borderRadius: 4, overflow: 'hidden' },
+  ratingBarFill:        { height: '100%', backgroundColor: '#F18F01', borderRadius: 4 },
+  ratingBarCount:       { fontSize: 12, color: '#aaa', width: 20, textAlign: 'right' },
 
   infoGrid:         { flexDirection: 'row', gap: 12, marginBottom: 20 },
   infoItem:         { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 12, padding: 12, gap: 10, borderWidth: 1, borderColor: '#f0f0f0' },
@@ -662,7 +929,13 @@ const styles = StyleSheet.create({
   writeReviewTitle: { fontSize: 15, fontWeight: '700', color: '#1a1a1a' },
   reviewInputWrap:  { display: 'none' },
   reviewInput:      { display: 'none' },
-  reviewTextInput:  { backgroundColor: '#f9fafb', borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 10, padding: 12, fontSize: 14, color: '#1a1a1a', minHeight: 80 },
+  reviewTextInput:     { backgroundColor: '#f9fafb', borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 10, padding: 12, fontSize: 14, color: '#1a1a1a', minHeight: 80 },
+  reviewPhotoPreview:  { width: '100%', height: 160, borderRadius: 10, marginTop: 8 },
+  photoPickerBtn:      { backgroundColor: '#f5f5f5', borderRadius: 10, paddingVertical: 12, alignItems: 'center', borderWidth: 1, borderColor: '#e0e0e0', borderStyle: 'dashed' },
+  photoPickerText:     { fontSize: 13, color: '#555', fontWeight: '500' },
+  reviewPhotoWrap:     { position: 'relative' },
+  removePhotoBtn:      { position: 'absolute', top: 8, right: 8, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
+  removePhotoBtnText:  { color: '#fff', fontSize: 11, fontWeight: '600' },
   submitReviewBtn:  { backgroundColor: '#1D9E75', borderRadius: 10, paddingVertical: 12, alignItems: 'center' },
   submitReviewBtnDisabled: { backgroundColor: '#a0d4c0' },
   submitReviewBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
@@ -678,7 +951,13 @@ const styles = StyleSheet.create({
   reviewName:       { fontSize: 14, fontWeight: '600', color: '#1a1a1a' },
   flagBtn:          { padding: 4 },
   flagBtnText:      { fontSize: 16, color: '#ccc' },
-  reviewText:       { fontSize: 14, color: '#555', lineHeight: 20 },
+  reviewText:           { fontSize: 14, color: '#555', lineHeight: 20 },
+  reviewPhoto:          { width: '100%', height: 160, borderRadius: 10, marginTop: 10 },
+  reviewFooter:         { flexDirection: 'row', alignItems: 'center', marginTop: 10 },
+  helpfulBtn:           { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: '#f5f5f5', borderWidth: 1, borderColor: '#e0e0e0' },
+  helpfulBtnActive:     { backgroundColor: '#E1F5EE', borderColor: '#1D9E75' },
+  helpfulBtnText:       { fontSize: 12, color: '#555', fontWeight: '500' },
+  helpfulBtnTextActive: { color: '#0F6E56', fontWeight: '700' },
   replyBox:         { backgroundColor: '#f9fafb', borderRadius: 8, padding: 10, marginTop: 10, borderLeftWidth: 3, borderLeftColor: '#1D9E75', borderRadius: 0 },
   replyLabel:       { fontSize: 12, fontWeight: '700', color: '#1D9E75', marginBottom: 4 },
   replyText:        { fontSize: 13, color: '#555' },
@@ -705,4 +984,16 @@ const styles = StyleSheet.create({
 
   loadMoreReviews:     { backgroundColor: '#f5f5f5', borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginTop: 8 },
   loadMoreReviewsText: { fontSize: 13, color: '#1D9E75', fontWeight: '600' },
+
+  replyBtn:              { marginLeft: 10, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: '#f5f5f5', borderWidth: 1, borderColor: '#e0e0e0' },
+  replyBtnText:          { fontSize: 12, color: '#555', fontWeight: '500' },
+  replyInputBox:         { backgroundColor: '#fff', borderRadius: 14, padding: 16, marginTop: 12, borderWidth: 1, borderColor: '#e0e0e0' },
+  replyInputTitle:       { fontSize: 13, fontWeight: '700', color: '#1a1a1a', marginBottom: 8 },
+  replyInputField:       { backgroundColor: '#f9fafb', borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 10, padding: 12, fontSize: 14, color: '#1a1a1a', minHeight: 80 },
+  replyInputActions:     { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 10 },
+  replyCancelBtn:        { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10, backgroundColor: '#f5f5f5' },
+  replyCancelBtnText:    { fontSize: 13, color: '#555', fontWeight: '600' },
+  replySubmitBtn:        { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10, backgroundColor: '#1D9E75' },
+  replySubmitBtnDisabled: { backgroundColor: '#a0d4c0' },
+  replySubmitBtnText:    { fontSize: 13, color: '#fff', fontWeight: '700' },
 });
