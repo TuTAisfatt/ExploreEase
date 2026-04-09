@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
+import { registerForPushNotifications } from '../services/notificationService';
 
 const AuthContext = createContext({});
 export const useAuth = () => useContext(AuthContext);
@@ -19,6 +20,8 @@ export function AuthProvider({ children }) {
         if (profile.otpVerified === true) {
           setUser(firebaseUser);
           setUserProfile(profile);
+          // Register for push notifications
+          registerForPushNotifications(firebaseUser.uid).catch(console.warn);
         } else {
           await signOut(auth);
           setUser(null);

@@ -18,6 +18,7 @@ import {
   serverTimestamp,
 } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
+import { notifyWelcome } from './notificationService';
 
 // ─────────────────────────────────────────────
 // 1. REGISTER WITH EMAIL & PASSWORD
@@ -44,6 +45,9 @@ export async function registerWithEmail(name, email, password) {
     isAdmin:      false,
     createdAt:    serverTimestamp(),
   });
+
+  // Send welcome notification
+  await notifyWelcome(user.uid);
 
   return user;
 }

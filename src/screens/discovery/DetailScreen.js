@@ -10,6 +10,7 @@ import { db } from '../../config/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { getReviews, addReview, flagReview, markHelpful, unmarkHelpful, replyToReview } from '../../services/reviewService';
 import { addBookmark, removeBookmark, getBookmarks } from '../../services/userService';
+import { notifyBookmarked, notifyReviewHelpful } from '../../services/notificationService';
 import { formatDistance, getDistance } from '../../services/locationService';
 import { getSimilarAttractions, trackActivity } from '../../services/recommendationService';
 import { useLocation } from '../../hooks/useLocation';
@@ -136,6 +137,7 @@ export default function DetailScreen({ route, navigation }) {
         await removeBookmark(user.uid, itemId);
       } else {
         await addBookmark(user.uid, itemId, type, item);
+        await notifyBookmarked(user.uid, item.name ?? item.title ?? 'Place');
       }
       setBookmarked(!bookmarked);
     } catch (e) {
@@ -288,6 +290,13 @@ export default function DetailScreen({ route, navigation }) {
         await unmarkHelpful(review.id, user.uid);
       } else {
         await markHelpful(review.id, user.uid);
+        // Notify the review author
+        if (review.userId && review.userId !== user.uid) {
+          await notifyReviewHelpful(
+            review.userId,
+            item.name ?? item.title ?? 'a place'
+          );
+        }
       }
     } catch (e) {
       console.error('Helpful error:', e);

@@ -1,5 +1,7 @@
-import React from 'react';
+import { useEffect, useState } from 'react';
 import { View, Text } from 'react-native';
+import { getNotifications } from '../services/notificationService';
+import { useAuth } from '../context/AuthContext';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
 import { Ionicons } from '@expo/vector-icons';
@@ -14,6 +16,9 @@ import DetailScreen from '../screens/discovery/DetailScreen';
 import EventsScreen      from '../screens/events/EventsScreen';
 import EventDetailScreen from '../screens/events/EventDetailScreen';
 import CreateEventScreen from '../screens/events/CreateEventScreen';
+
+// ── Notifications screen ──
+import NotificationsScreen from '../screens/notifications/NotificationsScreen';
 
 // ── Auth & Profile screens (fully built) ──
 import ProfileScreen     from '../screens/profile/ProfileScreen';
@@ -81,6 +86,24 @@ function ProfileStack() {
 }
 
 export default function MainTabNavigator() {
+  const { user } = useAuth();
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    if (!user) return;
+    // Fetch immediately
+    getNotifications(user.uid).then(notifs => {
+      setUnreadCount(notifs.filter(n => !n.read).length);
+    });
+    // Then poll every 5 seconds
+    const interval = setInterval(() => {
+      getNotifications(user.uid).then(notifs => {
+        setUnreadCount(notifs.filter(n => !n.read).length);
+      });
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [user]);
+
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
@@ -110,12 +133,15 @@ export default function MainTabNavigator() {
             />
           );
         },
+        tabBarBadge: route.name === 'Notifications' && unreadCount > 0
+          ? unreadCount
+          : undefined,
       })}
     >
       <Tab.Screen name="Discover"      component={DiscoverStack} />
       <Tab.Screen name="Events"        component={EventsStack} />
       <Tab.Screen name="Social"        component={SocialStack} />
-      <Tab.Screen name="Notifications" component={Placeholder} />
+      <Tab.Screen name="Notifications" component={NotificationsScreen} />
       <Tab.Screen name="Profile"       component={ProfileStack} />
     </Tab.Navigator>
   );

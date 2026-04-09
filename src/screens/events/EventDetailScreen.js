@@ -6,6 +6,7 @@ import {
 import { useAuth } from '../../context/AuthContext';
 import { getEvent, computeStatus, joinEvent, leaveEvent, deleteEvent } from '../../services/eventService';
 import { addBookmark, removeBookmark, getBookmarks } from '../../services/userService';
+import { notifyJoinedEvent, notifyOrganizerJoin, scheduleEventReminder } from '../../services/notificationService';
 
 export default function EventDetailScreen({ route, navigation }) {
   const { eventId } = route.params;
@@ -53,6 +54,18 @@ export default function EventDetailScreen({ route, navigation }) {
         }));
       } else {
         await joinEvent(eventId, user.uid);
+        await notifyJoinedEvent(user.uid, event.title);
+        // Notify the organizer
+        if (event.organizerId && event.organizerId !== user.uid) {
+          await notifyOrganizerJoin(
+            event.organizerId,
+            userProfile?.name ?? 'Someone',
+            event.title
+          );
+        }
+        // Schedule local reminder 1 hour before
+        const startMs = event.startDate?.toMillis?.() ?? event.startDate?.seconds * 1000;
+        await scheduleEventReminder(event.title, startMs);
         setEvent(prev => ({
           ...prev,
           attendees: [...(prev.attendees ?? []), user.uid],
@@ -262,7 +275,7 @@ export default function EventDetailScreen({ route, navigation }) {
             >
               {joining
                 ? <ActivityIndicator color="#fff" size="small" />
-                : <Text style={styles.joinBtnText}>
+                : <Text style={[styles.joinBtnText, { color: isJoined ? '#1D9E75' : '#fff' }]}>
                     {isJoined ? '✓ Joined' : '+ Join event'}
                   </Text>
               }
@@ -356,8 +369,8 @@ const styles = StyleSheet.create({
 
   actionRow:        { flexDirection: 'row', gap: 10, marginBottom: 20 },
   joinBtn:          { flex: 1, backgroundColor: '#1D9E75', borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
-  joinBtnLeave:     { backgroundColor: '#f0f0f0' },
-  joinBtnText:      { color: '#fff', fontWeight: '700', fontSize: 15 },
+  joinBtnLeave:     { backgroundColor: '#e8f5e9', borderWidth: 1, borderColor: '#1D9E75' },
+  joinBtnText:      { fontWeight: '700', fontSize: 15 },
   iconBtn:          { backgroundColor: '#fff', borderRadius: 12, width: 48, height: 48, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#e0e0e0' },
   iconBtnText:      { fontSize: 20 },
 
