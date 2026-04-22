@@ -7,8 +7,8 @@ import { verifyOTP, resendOTP } from '../../services/otpService';
 import { useAuth } from '../../context/AuthContext';
 
 export default function OTPScreen({ navigation, route }) {
-  const { email, name, password } = route.params;
-  const { recheckAuth } = useAuth();
+  const { email, name, password, mode } = route.params;
+  const { recheckAuth, recheckAuthAfter2FA } = useAuth();
 
   const [code,        setCode]        = useState(['', '', '', '', '', '']);
   const [loading,     setLoading]     = useState(false);
@@ -67,19 +67,25 @@ export default function OTPScreen({ navigation, route }) {
     try {
       await verifyOTP(email, enteredCode);
 
-      // Mark as verified in Firestore
       const { getAuth } = await import('firebase/auth');
       const { doc, updateDoc } = await import('firebase/firestore');
       const { db } = await import('../../config/firebase');
       const currentUser = getAuth().currentUser;
-      if (currentUser) {
-        await updateDoc(doc(db, 'users', currentUser.uid), {
-          otpVerified: true,
-        });
-      }
 
-      // Re-check auth state — this will navigate to home automatically
-      await recheckAuth();
+      if (mode === '2fa') {
+        // Re-login with original credentials now that OTP is verified
+        const { loginWithEmail } = await import('../../services/authService');
+        await loginWithEmail(route.params.email, route.params.password);
+        await recheckAuthAfter2FA();
+      } else {
+        // Registration OTP — mark as verified
+        if (currentUser) {
+          await updateDoc(doc(db, 'users', currentUser.uid), {
+            otpVerified: true,
+          });
+        }
+        await recheckAuth();
+      }
     } catch (err) {
       Alert.alert('Verification failed', err.message);
       setCode(['', '', '', '', '', '']);
@@ -123,9 +129,13 @@ export default function OTPScreen({ navigation, route }) {
       <View style={styles.iconWrap}>
         <Text style={styles.icon}>✉️</Text>
       </View>
-      <Text style={styles.title}>Check your email</Text>
+      <Text style={styles.title}>
+        {mode === '2fa' ? 'Two-factor auth' : 'Check your email'}
+      </Text>
       <Text style={styles.subtitle}>
-        We sent a 6-digit verification code to
+        {mode === '2fa'
+          ? 'Enter the 6-digit code sent to'
+          : 'We sent a 6-digit verification code to'}
       </Text>
       <Text style={styles.email}>{email}</Text>
 
@@ -162,7 +172,9 @@ export default function OTPScreen({ navigation, route }) {
       >
         {loading
           ? <ActivityIndicator color="#fff" />
-          : <Text style={styles.btnText}>Verify Email</Text>
+          : <Text style={styles.btnText}>
+              {mode === '2fa' ? 'Verify & Login' : 'Verify Email'}
+            </Text>
         }
       </TouchableOpacity>
 

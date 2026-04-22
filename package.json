@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@emailjs/browser": "^4.4.1",
+    "@emailjs/nodejs": "^5.0.2",
     "@expo/metro-runtime": "~6.1.2",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-navigation/bottom-tabs": "^7.15.9",
@@ -21,6 +22,7 @@
     "expo-av": "~16.0.8",
     "expo-blur": "~15.0.8",
     "expo-camera": "~17.0.10",
+    "expo-crypto": "~15.0.8",
     "expo-device": "~8.0.10",
     "expo-image-picker": "~17.0.10",
     "expo-linear-gradient": "~15.0.8",
@@ -36,8 +38,10 @@
     "react-native": "0.81.5",
     "react-native-maps": "1.20.1",
     "react-native-paper": "^5.15.0",
+    "react-native-qrcode-svg": "^6.3.21",
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.16.0",
+    "react-native-svg": "15.12.1",
     "react-native-vector-icons": "^10.3.0",
     "react-native-web": "^0.21.0"
   },

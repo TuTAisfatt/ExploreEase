@@ -6,6 +6,9 @@ import {
 } from 'react-native';
 import { useAuth } from '../../context/AuthContext';
 import { getEvents, computeStatus, seedSampleEvents } from '../../services/eventService';
+import { cacheEvents, getCachedEvents } from '../../utils/offlineCache';
+import { getDistance } from '../../services/locationService';
+import { useLocation } from '../../hooks/useLocation';
 
 const CATEGORIES = [
   { id: null,        label: '🌐 All'       },
@@ -24,6 +27,7 @@ const STATUS_FILTERS = [
 
 export default function EventsScreen({ navigation }) {
   const { user } = useAuth();
+  const { region } = useLocation();
 
   const [events,          setEvents]          = useState([]);
   const [loading,         setLoading]         = useState(true);
@@ -37,6 +41,7 @@ export default function EventsScreen({ navigation }) {
   const [hasMore,         setHasMore]         = useState(true);
   const [loadingMore,     setLoadingMore]     = useState(false);
   const [now,             setNow]             = useState(Date.now());
+  const [maxDistance,     setMaxDistance]     = useState(null);
 
   useEffect(() => {
     const interval = setInterval(() => setNow(Date.now()), 1000);
@@ -51,8 +56,16 @@ export default function EventsScreen({ navigation }) {
       setEvents(prev => reset ? items : [...prev, ...items]);
       setLastDoc(newLastDoc);
       setHasMore(items.length >= 10);
+      // Cache for offline
+      if (reset) await cacheEvents(items);
     } catch (e) {
       console.error('fetchEvents error:', e);
+      // Load from cache if offline
+      const cached = await getCachedEvents();
+      if (cached) {
+        setEvents(cached);
+        setHasMore(false);
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -88,6 +101,12 @@ export default function EventsScreen({ navigation }) {
     if (activeStatus   && status !== activeStatus)          return false;
     if (activeCategory && event.category !== activeCategory) return false;
     if (showFreeOnly   && event.price !== 0)                return false;
+    if (maxDistance && region && event.location) {
+      const lat = event.location.latitude  ?? event.location._lat;
+      const lng = event.location.longitude ?? event.location._long;
+      const dist = getDistance(region.latitude, region.longitude, lat, lng);
+      if (dist > maxDistance) return false;
+    }
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       return (
@@ -188,6 +207,24 @@ export default function EventsScreen({ navigation }) {
             Free
           </Text>
         </TouchableOpacity>
+      </View>
+
+      {/* Distance filter */}
+      <View style={styles.distanceRow}>
+        <Text style={styles.distanceLabel}>📏 Distance:</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.distanceChips}>
+          {[null, 2, 5, 10, 20].map(d => (
+            <TouchableOpacity
+              key={String(d)}
+              style={[styles.chip, maxDistance === d && styles.chipActive]}
+              onPress={() => setMaxDistance(d)}
+            >
+              <Text style={[styles.chipText, maxDistance === d && styles.chipTextActive]}>
+                {d === null ? 'Any' : `< ${d} km`}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
       </View>
 
       {/* ── Events list ── */}
@@ -397,4 +434,7 @@ const styles = StyleSheet.create({
   cardCountdownText:  { fontSize: 12, color: '#0F6E56', fontWeight: '700' },
   loadingMore:        { paddingVertical: 16, alignItems: 'center' },
   loadingMoreText:    { fontSize: 12, color: '#aaa' },
+  distanceRow:        { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, marginBottom: 8, gap: 8 },
+  distanceLabel:      { fontSize: 12, color: '#555', fontWeight: '600', flexShrink: 0 },
+  distanceChips:      { gap: 8 },
 });

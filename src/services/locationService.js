@@ -71,7 +71,7 @@ export function formatDistance(km) {
 // ─────────────────────────────────────────────
 // 3. GET NEARBY ATTRACTIONS FROM FIRESTORE
 // ─────────────────────────────────────────────
-export async function getNearbyAttractions(latitude, longitude, radiusKm = 10) {
+export async function getNearbyAttractions(latitude, longitude, radiusKm = 50) {
   // Firestore doesn't support geo queries natively
   // We use a bounding box then filter by exact distance
   const delta = radiusKm / 111; // ~111 km per degree of latitude
@@ -86,13 +86,15 @@ export async function getNearbyAttractions(latitude, longitude, radiusKm = 10) {
   const nearby = snap.docs
     .map(d => ({ id: d.id, ...d.data() }))
     .filter(a => {
-      if (!a.location) return false;
+      if (a.approved === false && a.createdBy) return false;
+      if (!a.location) return true;
       const lat = a.location.latitude  ?? a.location._lat;
       const lng = a.location.longitude ?? a.location._long;
       const dist = getDistance(latitude, longitude, lat, lng);
       return dist <= radiusKm;
     })
     .map(a => {
+      if (!a.location) return { ...a, distance: 999 };
       const lat = a.location.latitude  ?? a.location._lat;
       const lng = a.location.longitude ?? a.location._long;
       return {

@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import * as Google from 'expo-auth-session/providers/google';
 import * as WebBrowser from 'expo-web-browser';
+import * as AuthSession from 'expo-auth-session';
 import { GoogleAuthProvider, signInWithPopup, getAuth } from 'firebase/auth';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { useAuth } from '../../context/AuthContext';
@@ -14,8 +15,9 @@ import { db } from '../../config/firebase';
 
 WebBrowser.maybeCompleteAuthSession();
 
-const GOOGLE_WEB_CLIENT_ID =
-  '601652648520-01ou9ga9op9h2imk5lf7k1phpmachr5p.apps.googleusercontent.com';
+const GOOGLE_WEB_CLIENT_ID     = '601652648520-01ou9ga9op9h2imk5lf7k1phpmachr5p.apps.googleusercontent.com';
+const GOOGLE_IOS_CLIENT_ID     = '601652648520-cnn4u607pafle6ndgstmrsv440hbtcrs.apps.googleusercontent.com';
+const GOOGLE_ANDROID_CLIENT_ID = '601652648520-nspetnesp1795lgjefaof6ldumatmrt3.apps.googleusercontent.com';
 
 export default function LoginScreen({ navigation }) {
   const { recheckAuth } = useAuth();
@@ -28,9 +30,14 @@ export default function LoginScreen({ navigation }) {
   // ── Google auth session (mobile only) ─────────────────────
   const [, response, promptAsync] = Google.useAuthRequest({
     webClientId:     GOOGLE_WEB_CLIENT_ID,
-    iosClientId:     GOOGLE_WEB_CLIENT_ID,
-    androidClientId: GOOGLE_WEB_CLIENT_ID,
-  });
+    iosClientId:     GOOGLE_IOS_CLIENT_ID,
+    androidClientId: GOOGLE_ANDROID_CLIENT_ID,
+  }, { useProxy: true });
+
+  useEffect(() => {
+    console.log('Google auth response:', JSON.stringify(response));
+    console.log('Redirect URI:', AuthSession.makeRedirectUri({ useProxy: true, projectNameForProxy: 'exploreease' }));
+  }, [response]);
 
   useEffect(() => {
     if (response?.type === 'success') {
@@ -46,8 +53,24 @@ export default function LoginScreen({ navigation }) {
     if (!canSubmit) return;
     setLoading(true);
     try {
-      await loginWithEmail(email.trim(), password);
-      await recheckAuth();
+      const userCredential = await loginWithEmail(email.trim(), password);
+      const uid = userCredential.user.uid;
+
+      const snap = await getDoc(doc(db, 'users', uid));
+      const profile = snap.data();
+
+      if (profile?.twoFactorEnabled) {
+        const { sendOTP } = await import('../../services/otpService');
+        await sendOTP(email.trim(), profile?.name ?? '');
+        navigation.navigate('OTP', {
+          email:    email.trim(),
+          password: password,
+          mode:     '2fa',
+          userId:   uid,
+        });
+      } else {
+        await recheckAuth();
+      }
     } catch (err) {
       Alert.alert('Login failed', getFriendlyError(err.code));
     } finally {

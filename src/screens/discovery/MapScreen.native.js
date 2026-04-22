@@ -30,7 +30,7 @@ export default function MapScreen({ navigation }) {
     (async () => {
       try {
         const [attractionData, eventData] = await Promise.all([
-          getNearbyAttractions(region.latitude, region.longitude, 20),
+          getNearbyAttractions(region.latitude, region.longitude, 50),
           getEvents({ approved: true }),
         ]);
         setAttractions(attractionData);

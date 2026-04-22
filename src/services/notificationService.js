@@ -29,7 +29,13 @@ export async function registerForPushNotifications(userId) {
     finalStatus = status;
   }
   if (finalStatus !== 'granted') return null;
-  const token = (await Notifications.getExpoPushTokenAsync()).data;
+  let token = null;
+  try {
+    token = (await Notifications.getExpoPushTokenAsync()).data;
+  } catch (e) {
+    console.warn('Push token unavailable:', e.message);
+    return null;
+  }
   if (userId) {
     await updateDoc(doc(db, 'users', userId), { pushToken: token });
   }

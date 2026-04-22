@@ -10,11 +10,13 @@ import { useAuth } from '../../context/AuthContext';
 import { useLocation } from '../../hooks/useLocation';
 import { useRecommendations } from '../../hooks/useRecommendations';
 import { getNearbyAttractions, seedSampleAttractions, formatDistance, getDistance } from '../../services/locationService';
+import { cacheAttractions, getCachedAttractions } from '../../utils/offlineCache';
 import { trackActivity } from '../../services/recommendationService';
 import { INTEREST_TAGS } from '../../utils/constants';
 
 export default function HomeScreen({ navigation }) {
-  const { user, userProfile } = useAuth();
+  const { user, userProfile, isAdmin } = useAuth();
+  const isOrganizer = userProfile?.role === 'organizer' || isAdmin;
   const { region, loading: locationLoading } = useLocation();
   const { recommendations, allAttractions, loading: recsLoading, seasonalContext } = useRecommendations();
 
@@ -41,8 +43,9 @@ export default function HomeScreen({ navigation }) {
       );
       const sorted = data.sort((a, b) => (a.distance ?? 999) - (b.distance ?? 999));
       setAttractions(sorted);
+      // Cache for offline
+      await cacheAttractions(sorted);
 
-      // Paginate client-side
       const currentPage = reset ? 0 : page;
       const slice = sorted.slice(0, (currentPage + 1) * PAGE_SIZE);
       setFiltered(slice);
@@ -50,6 +53,14 @@ export default function HomeScreen({ navigation }) {
       setHasMore(sorted.length > (currentPage + 1) * PAGE_SIZE);
     } catch (e) {
       console.error('Failed to fetch attractions:', e);
+      // Load from cache if offline
+      const cached = await getCachedAttractions();
+      if (cached) {
+        setAttractions(cached);
+        setFiltered(cached.slice(0, PAGE_SIZE));
+        setPage(1);
+        setHasMore(cached.length > PAGE_SIZE);
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -135,6 +146,14 @@ export default function HomeScreen({ navigation }) {
           <Text style={styles.subGreeting}>Where do you want to go today?</Text>
         </View>
         <View style={styles.headerIcons}>
+          {isOrganizer && (
+            <TouchableOpacity
+              style={styles.createBtn}
+              onPress={() => navigation.navigate('CreateAttraction')}
+            >
+              <Text style={styles.createBtnText}>+ Create</Text>
+            </TouchableOpacity>
+          )}
           <TouchableOpacity
             style={styles.iconBtn}
             onPress={() => {
@@ -563,6 +582,8 @@ const styles = StyleSheet.create({
   metaPrice:          { fontSize: 13, color: '#1D9E75', fontWeight: '700' },
 
   headerIcons:            { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  createBtn:              { backgroundColor: '#1D9E75', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 7 },
+  createBtnText:          { color: '#fff', fontWeight: '700', fontSize: 13 },
   iconBtn:                { padding: 8 },
 
   modalOverlay:           { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end', zIndex: 100 },

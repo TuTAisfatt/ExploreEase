@@ -146,7 +146,7 @@ export default function NotificationsScreen() {
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.tabs}
-        style={{ flexGrow: 0 }}
+        style={{ flexGrow: 0, height: 52 }}
         renderItem={({ item }) => (
           <TouchableOpacity
             style={[styles.tab, activeCategory === item.id && styles.tabActive]}
@@ -238,7 +238,7 @@ const styles = StyleSheet.create({
   clearBtnText:    { color: '#E24B4A' },
 
   tabs:            { paddingHorizontal: 16, paddingVertical: 8, gap: 8 },
-  tab:             { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: '#fff', borderWidth: 1, borderColor: '#e0e0e0', alignSelf: 'flex-start' },
+  tab:             { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: '#fff', borderWidth: 1, borderColor: '#e0e0e0', alignSelf: 'center', height: 34, justifyContent: 'center' },
   tabActive:       { backgroundColor: '#1D9E75', borderColor: '#1D9E75' },
   tabText:         { fontSize: 12, color: '#555' },
   tabTextActive:   { color: '#fff', fontWeight: '600' },

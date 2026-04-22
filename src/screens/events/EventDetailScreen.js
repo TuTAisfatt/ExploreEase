@@ -7,6 +7,8 @@ import { useAuth } from '../../context/AuthContext';
 import { getEvent, computeStatus, joinEvent, leaveEvent, deleteEvent } from '../../services/eventService';
 import { addBookmark, removeBookmark, getBookmarks } from '../../services/userService';
 import { notifyJoinedEvent, notifyOrganizerJoin, scheduleEventReminder } from '../../services/notificationService';
+import { getTravelPlans, addStopToPlan } from '../../services/travelService';
+import { postActivity } from '../../services/socialService';
 
 export default function EventDetailScreen({ route, navigation }) {
   const { eventId } = route.params;
@@ -17,6 +19,9 @@ export default function EventDetailScreen({ route, navigation }) {
   const [bookmarked, setBookmarked] = useState(false);
   const [joining,    setJoining]    = useState(false);
   const [now,        setNow]        = useState(Date.now());
+  const [showItineraryPicker, setShowItineraryPicker] = useState(false);
+  const [travelPlans,         setTravelPlans]         = useState([]);
+  const [selectedPlan,        setSelectedPlan]        = useState(null);
 
   useEffect(() => {
     const interval = setInterval(() => setNow(Date.now()), 1000);
@@ -55,6 +60,11 @@ export default function EventDetailScreen({ route, navigation }) {
       } else {
         await joinEvent(eventId, user.uid);
         await notifyJoinedEvent(user.uid, event.title);
+        await postActivity(user.uid, userProfile?.name ?? 'Someone', {
+          type:       'joined',
+          targetName: event.title,
+          targetId:   eventId,
+        });
         // Notify the organizer
         if (event.organizerId && event.organizerId !== user.uid) {
           await notifyOrganizerJoin(
@@ -109,16 +119,65 @@ export default function EventDetailScreen({ route, navigation }) {
     }
   }
 
+  // ── Add to itinerary ─────────────────────────────────────
+  async function handleAddToItinerary() {
+    if (!user) return Alert.alert('Sign in required');
+    try {
+      const plans = await getTravelPlans(user.uid);
+      if (plans.length === 0) {
+        Alert.alert('No plans yet', 'Create a travel plan first in the Travel tab.');
+        return;
+      }
+      setTravelPlans(plans);
+      setShowItineraryPicker(true);
+    } catch (e) {
+      console.error('handleAddToItinerary error:', e);
+    }
+  }
+
+  async function handleSelectPlan(plan) {
+    setSelectedPlan(plan);
+  }
+
+  async function handleSelectDay(plan, day) {
+    setShowItineraryPicker(false);
+    setSelectedPlan(null);
+    try {
+      const stop = {
+        id:       event.id,
+        name:     event.title,
+        type:     'event',
+        address:  event.address ?? '',
+        location: event.location ?? null,
+        note:     null,
+      };
+      await addStopToPlan(plan.id, day.id, stop);
+      Alert.alert('✅ Added!', `${event.title} added to "${plan.title}" - ${day.label}`);
+    } catch (e) {
+      Alert.alert('Error', 'Could not add to itinerary.');
+    }
+  }
+
   // ── Get Directions ────────────────────────────────────────
   function handleDirections() {
-    if (!event?.location) return;
-    const { latitude, longitude } = event.location;
-    const url = Platform.select({
-      ios:     `maps://app?daddr=${latitude},${longitude}`,
-      android: `google.navigation:q=${latitude},${longitude}`,
-      default: `https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}`,
-    });
-    Linking.openURL(url);
+    if (event?.location) {
+      const { latitude, longitude } = event.location;
+      const url = Platform.select({
+        ios:     `maps://app?daddr=${latitude},${longitude}`,
+        android: `google.navigation:q=${latitude},${longitude}`,
+        default: `https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}`,
+      });
+      Linking.openURL(url).catch(() =>
+        Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}`)
+      );
+    } else if (event?.address) {
+      const encoded = encodeURIComponent(event.address);
+      Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${encoded}`).catch(
+        () => Alert.alert('Error', 'Could not open maps.')
+      );
+    } else {
+      Alert.alert('No location', 'This event has no location set.');
+    }
   }
 
   // ── Delete event ──────────────────────────────────────────
@@ -191,7 +250,8 @@ export default function EventDetailScreen({ route, navigation }) {
   const statusStyle = statusColors[status] ?? statusColors.incoming;
 
   return (
-    <ScrollView style={styles.root} showsVerticalScrollIndicator={false}>
+    <View style={styles.root}>
+    <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
       {/* ── Hero image ── */}
       <View style={styles.heroWrap}>
         {event.imageUrl ? (
@@ -291,6 +351,16 @@ export default function EventDetailScreen({ route, navigation }) {
           <TouchableOpacity style={styles.iconBtn} onPress={handleShare}>
             <Text style={styles.iconBtnText}>↑</Text>
           </TouchableOpacity>
+
+          {/* Add to itinerary */}
+          <TouchableOpacity style={styles.iconBtn} onPress={handleAddToItinerary}>
+            <Text style={styles.iconBtnText}>🗺️</Text>
+          </TouchableOpacity>
+
+          {/* Group Chat */}
+          <TouchableOpacity style={styles.iconBtn} onPress={() => navigation.navigate('EventChat', { eventId, eventTitle: event.title })}>
+            <Text style={styles.iconBtnText}>💬</Text>
+          </TouchableOpacity>
         </View>
 
         {/* ── Organizer actions ── */}
@@ -312,7 +382,63 @@ export default function EventDetailScreen({ route, navigation }) {
         )}
 
       </View>
+
     </ScrollView>
+
+      {/* ── Itinerary picker modal ── */}
+      {showItineraryPicker && (
+        <View style={styles.itineraryModal}>
+          <View style={styles.itinerarySheet}>
+            <View style={styles.itineraryModalHeader}>
+              <Text style={styles.itineraryModalTitle}>
+                {selectedPlan ? `Select Day — ${selectedPlan.title}` : 'Add to Travel Plan'}
+              </Text>
+              <TouchableOpacity onPress={() => {
+                if (selectedPlan) setSelectedPlan(null);
+                else setShowItineraryPicker(false);
+              }}>
+                <Text style={styles.itineraryModalClose}>{selectedPlan ? '←' : '✕'}</Text>
+              </TouchableOpacity>
+            </View>
+            {!selectedPlan ? (
+              travelPlans.map(plan => (
+                <TouchableOpacity
+                  key={plan.id}
+                  style={styles.planItem}
+                  onPress={() => handleSelectPlan(plan)}
+                >
+                  <Text style={{ fontSize: 24 }}>🗺️</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.planItemTitle}>{plan.title}</Text>
+                    <Text style={styles.planItemSub}>
+                      {plan.days?.length ?? 0} days · {plan.days?.reduce((sum, d) => sum + (d.stops?.length ?? 0), 0)} stops
+                    </Text>
+                  </View>
+                  <Text style={{ fontSize: 20, color: '#ccc' }}>›</Text>
+                </TouchableOpacity>
+              ))
+            ) : (
+              selectedPlan.days.map(day => (
+                <TouchableOpacity
+                  key={day.id}
+                  style={styles.planItem}
+                  onPress={() => handleSelectDay(selectedPlan, day)}
+                >
+                  <Text style={{ fontSize: 24 }}>📅</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.planItemTitle}>{day.label}</Text>
+                    <Text style={styles.planItemSub}>
+                      {day.stops?.length ?? 0} stop{(day.stops?.length ?? 0) !== 1 ? 's' : ''}
+                    </Text>
+                  </View>
+                  <Text style={{ fontSize: 20, color: '#ccc' }}>›</Text>
+                </TouchableOpacity>
+              ))
+            )}
+          </View>
+        </View>
+      )}
+    </View>
   );
 }
 
@@ -381,4 +507,13 @@ const styles = StyleSheet.create({
   editBtnText:      { color: '#0F6E56', fontWeight: '600', fontSize: 14 },
   deleteBtn:        { flex: 1, backgroundColor: '#FCEBEB', borderRadius: 10, paddingVertical: 12, alignItems: 'center' },
   deleteBtnText:    { color: '#E24B4A', fontWeight: '600', fontSize: 14 },
+
+  itineraryModal:       { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end', zIndex: 100 },
+  itinerarySheet:       { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 20, paddingBottom: 40 },
+  itineraryModalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 16 },
+  itineraryModalTitle:  { fontSize: 17, fontWeight: '700', color: '#1a1a1a' },
+  itineraryModalClose:  { fontSize: 18, color: '#aaa', padding: 4 },
+  planItem:             { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#f0f0f0', gap: 12 },
+  planItemTitle:        { fontSize: 15, fontWeight: '700', color: '#1a1a1a' },
+  planItemSub:          { fontSize: 12, color: '#aaa', marginTop: 2 },
 });

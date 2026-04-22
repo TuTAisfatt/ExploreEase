@@ -1,7 +1,12 @@
 import { initializeApp } from 'firebase/app';
-import { getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
+import { getFirestore } from 'firebase/firestore';
 import { Platform } from 'react-native';
+import {
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+} from 'firebase/firestore';
 
 const firebaseConfig = {
   apiKey:            "AIzaSyB5T-Yl4kzZ0YtRTOBBKFgjDLPSbGeIeYw",
@@ -15,14 +20,12 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 
-// Auth — different setup for web vs mobile
+// ── Auth ──────────────────────────────────────────────────
 let auth;
 if (Platform.OS === 'web') {
-  // Web uses standard getAuth — no AsyncStorage needed
   const { getAuth } = require('firebase/auth');
   auth = getAuth(app);
 } else {
-  // Mobile uses initializeAuth with AsyncStorage for session persistence
   const { initializeAuth, getReactNativePersistence } = require('firebase/auth');
   const AsyncStorage = require('@react-native-async-storage/async-storage').default;
   auth = initializeAuth(app, {
@@ -30,7 +33,25 @@ if (Platform.OS === 'web') {
   });
 }
 
-export { auth };
-export const db      = getFirestore(app);
+// ── Firestore ─────────────────────────────────────────────
+let db;
+if (Platform.OS === 'web') {
+  // Web only: persistent cache with multi-tab support
+  try {
+    db = initializeFirestore(app, {
+      localCache: persistentLocalCache({
+        tabManager: persistentMultipleTabManager(),
+      }),
+    });
+  } catch (e) {
+    db = getFirestore(app);
+    console.warn('Web persistence not available:', e.message);
+  }
+} else {
+  // Mobile: standard Firestore (AsyncStorage handles offline via auth persistence)
+  db = getFirestore(app);
+}
+
+export { auth, db };
 export const storage = getStorage(app);
 export default app;

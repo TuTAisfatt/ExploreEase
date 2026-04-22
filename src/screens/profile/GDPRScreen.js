@@ -62,9 +62,56 @@ export default function GDPRScreen({ navigation }) {
       a.click();
       URL.revokeObjectURL(url);
     } else {
+      // Send data via EmailJS on mobile
       Alert.alert(
         'Download data',
-        'A full data export will be sent to your email address.'
+        'A full data export will be sent to your email address.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Send',
+            onPress: async () => {
+              try {
+                const data = {
+                  uid:         user?.uid,
+                  email:       user?.email,
+                  name:        userProfile?.name,
+                  age:         userProfile?.age,
+                  gender:      userProfile?.gender,
+                  travelStyle: userProfile?.travelStyle,
+                  interests:   userProfile?.interests?.join(', '),
+                  createdAt:   userProfile?.createdAt?.toDate?.()?.toLocaleDateString(),
+                };
+
+                const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    service_id:  'service_ltttq5x',
+                    template_id: 'template_ak3sthh',
+                    user_id:     'UbVEsfPyXLVAjk1FO',
+                    accessToken: 'xEGMzsbTxXZd_TPpL_6iu',
+                    template_params: {
+                      email:   user?.email,
+                      name:    userProfile?.name ?? 'User',
+                      title:   'GDPR Data Export',
+                      message: JSON.stringify(data, null, 2),
+                    },
+                  }),
+                });
+
+                if (response.ok) {
+                  Alert.alert('✅ Sent!', `Your data has been sent to ${user?.email}`);
+                } else {
+                  Alert.alert('Error', 'Could not send data. Please try again.');
+                }
+              } catch (e) {
+                console.error('GDPR download error:', e);
+                Alert.alert('Error', 'Could not send data. Please try again.');
+              }
+            },
+          },
+        ]
       );
     }
   }

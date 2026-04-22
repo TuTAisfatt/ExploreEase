@@ -10,9 +10,8 @@ import {
   where,
   serverTimestamp,
 } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { updateProfile } from 'firebase/auth';
-import { auth, db, storage } from '../config/firebase';
+import { auth, db } from '../config/firebase';
 
 const COLLECTION = 'users';
 
@@ -45,16 +44,54 @@ export async function updateUserProfile(userId, data) {
 }
 
 export async function uploadProfilePicture(userId, uri) {
-  const response  = await fetch(uri);
-  const blob      = await response.blob();
-  const storageRef = ref(storage, `profilePics/${userId}.jpg`);
-  await uploadBytes(storageRef, blob);
-  const url = await getDownloadURL(storageRef);
-  await updateDoc(doc(db, 'users', userId), { profilePicUrl: url });
-  if (auth.currentUser) {
-    await updateProfile(auth.currentUser, { photoURL: url });
+  try {
+    // Upload to Cloudinary instead of Firebase Storage
+    const formData = new FormData();
+
+    if (uri.startsWith('data:')) {
+      // Already base64
+      formData.append('file', uri);
+    } else {
+      // Fetch and convert to blob for web, use uri directly for mobile
+      const { Platform } = require('react-native');
+      if (Platform.OS === 'web') {
+        const response = await fetch(uri);
+        const blob     = await response.blob();
+        formData.append('file', blob);
+      } else {
+        // React Native — append as file object
+        formData.append('file', {
+          uri,
+          type: 'image/jpeg',
+          name: `profile_${userId}.jpg`,
+        });
+      }
+    }
+
+    formData.append('upload_preset', 'exploreease_reviews');
+    formData.append('folder', 'profilePics');
+
+    const res  = await fetch(
+      'https://api.cloudinary.com/v1_1/dpmtwyqg6/image/upload',
+      { method: 'POST', body: formData }
+    );
+    const data = await res.json();
+
+    if (!data.secure_url) {
+      throw new Error('Cloudinary upload failed');
+    }
+
+    const url = data.secure_url;
+
+    await updateDoc(doc(db, 'users', userId), { profilePicUrl: url });
+    if (auth.currentUser) {
+      await updateProfile(auth.currentUser, { photoURL: url });
+    }
+    return url;
+  } catch (e) {
+    console.error('uploadProfilePicture error:', e);
+    throw e;
   }
-  return url;
 }
 
 export async function addBookmark(userId, itemId, itemType, itemData = {}) {

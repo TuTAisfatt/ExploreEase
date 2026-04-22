@@ -6,11 +6,15 @@ import {
   Platform, FlatList, TextInput,
 } from 'react-native';
 import { doc, getDoc, getDocs, collection } from 'firebase/firestore';
+import QRCode from 'react-native-qrcode-svg';
 import { db } from '../../config/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { getReviews, addReview, flagReview, markHelpful, unmarkHelpful, replyToReview } from '../../services/reviewService';
 import { addBookmark, removeBookmark, getBookmarks } from '../../services/userService';
 import { notifyBookmarked, notifyReviewHelpful } from '../../services/notificationService';
+import { getTravelPlans, addStopToPlan } from '../../services/travelService';
+import { getUserPrivateChats, sendPrivateMessageWithUnread } from '../../services/chatService';
+import { postActivity } from '../../services/socialService';
 import { formatDistance, getDistance } from '../../services/locationService';
 import { getSimilarAttractions, trackActivity } from '../../services/recommendationService';
 import { useLocation } from '../../hooks/useLocation';
@@ -51,7 +55,7 @@ function isOpenNow(hours) {
 
 export default function DetailScreen({ route, navigation }) {
   const { itemId, type } = route.params;
-  const { user, userProfile } = useAuth();
+  const { user, userProfile, isAdmin } = useAuth();
   const { region } = useLocation();
 
   const [item,        setItem]        = useState(null);
@@ -70,6 +74,15 @@ export default function DetailScreen({ route, navigation }) {
   const [replyingTo,   setReplyingTo]   = useState(null);
   const [replyText,    setReplyText]    = useState('');
   const [replyingBusy, setReplyingBusy] = useState(false);
+  const [showItineraryPicker, setShowItineraryPicker] = useState(false);
+  const [travelPlans,         setTravelPlans]         = useState([]);
+  const [addingToPlan,        setAddingToPlan]        = useState(false);
+  const [selectedPlan,        setSelectedPlan]        = useState(null);
+  const [showQR,              setShowQR]              = useState(false);
+  const [showSendToChat,      setShowSendToChat]      = useState(false);
+  const [chatContacts,        setChatContacts]        = useState([]);
+  const [loadingContacts,     setLoadingContacts]     = useState(false);
+  const [sendingTo,           setSendingTo]           = useState(null);
 
   // ── Load attraction + reviews + bookmark status ──────────
   useEffect(() => {
@@ -138,10 +151,106 @@ export default function DetailScreen({ route, navigation }) {
       } else {
         await addBookmark(user.uid, itemId, type, item);
         await notifyBookmarked(user.uid, item.name ?? item.title ?? 'Place');
+        await postActivity(user.uid, userProfile?.name ?? 'Someone', {
+          type:       'bookmarked',
+          targetName: item.name ?? item.title ?? 'a place',
+          targetId:   itemId,
+        });
       }
       setBookmarked(!bookmarked);
     } catch (e) {
       Alert.alert('Error', 'Could not update bookmark.');
+    }
+  }
+
+  // ── Add to itinerary ─────────────────────────────────────
+  async function handleAddToItinerary() {
+    if (!user) return Alert.alert('Sign in required');
+    try {
+      const plans = await getTravelPlans(user.uid);
+      if (plans.length === 0) {
+        Alert.alert('No plans yet', 'Create a travel plan first in the Travel tab.');
+        return;
+      }
+      setTravelPlans(plans);
+      setShowItineraryPicker(true);
+    } catch (e) {
+      console.error('handleAddToItinerary error:', e);
+    }
+  }
+
+  async function handleOpenSendToChat() {
+    if (!user) return;
+    setLoadingContacts(true);
+    setShowSendToChat(true);
+    try {
+      const chats = await getUserPrivateChats(user.uid);
+      const { getUserById } = await import('../../services/userService');
+      const enriched = await Promise.all(
+        chats.map(async chat => {
+          const otherId = chat.participants.find(id => id !== user.uid);
+          let profile = null;
+          try { profile = await getUserById(otherId); } catch {}
+          return { ...chat, otherId, otherProfile: profile };
+        })
+      );
+      setChatContacts(enriched);
+    } catch (e) {
+      console.error('handleOpenSendToChat error:', e);
+    } finally {
+      setLoadingContacts(false);
+    }
+  }
+
+  async function handleSendRecommendation(chat) {
+    setSendingTo(chat.id);
+    try {
+      await sendPrivateMessageWithUnread(chat.id, {
+        text:      `📍 I recommend: ${item.name}\n${item.address ?? ''}`,
+        userId:    user.uid,
+        userName:  userProfile?.name ?? 'Anonymous',
+        userPhoto: userProfile?.profilePicUrl ?? '',
+        type:      'recommendation',
+        placeId:   item.id,
+        placeName: item.name,
+      }, chat.otherId);
+      setShowSendToChat(false);
+      setShowQR(false);
+      if (Platform.OS === 'web') {
+        window.alert('Recommendation sent!');
+      } else {
+        Alert.alert('Sent!', 'Recommendation sent successfully.');
+      }
+    } catch (e) {
+      Alert.alert('Error', 'Could not send recommendation.');
+    } finally {
+      setSendingTo(null);
+    }
+  }
+
+  async function handleSelectPlan(plan) {
+    setSelectedPlan(plan);
+  }
+
+  async function handleSelectDay(plan, day) {
+    setShowItineraryPicker(false);
+    setSelectedPlan(null);
+    setAddingToPlan(true);
+    try {
+      const stop = {
+        id:       item.id,
+        name:     item.name ?? item.title,
+        type:     'attraction',
+        address:  item.address ?? '',
+        location: item.location ?? null,
+        note:     null,
+      };
+      await addStopToPlan(plan.id, day.id, stop);
+      Alert.alert('✅ Added!', `${item.name} added to "${plan.title}" - ${day.label}`);
+    } catch (e) {
+      Alert.alert('Error', 'Could not add to itinerary.');
+    } finally {
+      setAddingToPlan(false);
     }
   }
 
@@ -195,6 +304,11 @@ export default function DetailScreen({ route, navigation }) {
       setReviewText('');
       setReviewPhoto('');
       Alert.alert('Thanks!', 'Your review has been posted.');
+      await postActivity(user.uid, userProfile?.name ?? 'Someone', {
+        type:       'reviewed',
+        targetName: item.name ?? item.title ?? 'a place',
+        targetId:   itemId,
+      });
     } catch (e) {
       Alert.alert('Error', 'Could not post review. Please try again.');
     } finally {
@@ -380,8 +494,9 @@ export default function DetailScreen({ route, navigation }) {
     : null;
 
   return (
+    <View style={styles.root}>
     <ScrollView
-      style={styles.root}
+      style={{ flex: 1 }}
       showsVerticalScrollIndicator={false}
     >
       {/* ── Hero image ── */}
@@ -450,29 +565,27 @@ export default function DetailScreen({ route, navigation }) {
 
         {/* ── Info grid ── */}
         {item.hours && (
-          <View style={styles.infoGrid}>
-            <View style={styles.infoItem}>
+          <View style={styles.hoursCard}>
+            <View style={styles.hoursRow}>
               <Text style={styles.infoIcon}>🕐</Text>
-              <View>
+              <View style={{ flex: 1 }}>
                 <Text style={styles.infoLabel}>Hours</Text>
                 <Text style={styles.infoValue}>{item.hours}</Text>
               </View>
-            </View>
-
-            {/* Open/Closed status badge */}
-            {isOpenNow(item.hours) !== null && (
-              <View style={[
-                styles.openBadge,
-                isOpenNow(item.hours) ? styles.openBadgeOpen : styles.openBadgeClosed,
-              ]}>
-                <Text style={[
-                  styles.openBadgeText,
-                  isOpenNow(item.hours) ? styles.openBadgeTextOpen : styles.openBadgeTextClosed,
+              {isOpenNow(item.hours) !== null && (
+                <View style={[
+                  styles.openBadgeSmall,
+                  isOpenNow(item.hours) ? styles.openBadgeOpen : styles.openBadgeClosed,
                 ]}>
-                  {isOpenNow(item.hours) ? '✅ Open now' : '🔴 Closed now'}
-                </Text>
-              </View>
-            )}
+                  <Text style={[
+                    styles.openBadgeText,
+                    isOpenNow(item.hours) ? styles.openBadgeTextOpen : styles.openBadgeTextClosed,
+                  ]}>
+                    {isOpenNow(item.hours) ? '✅ Open' : '🔴 Closed'}
+                  </Text>
+                </View>
+              )}
+            </View>
           </View>
         )}
         <View style={styles.infoGrid}>
@@ -493,6 +606,44 @@ export default function DetailScreen({ route, navigation }) {
           </View>
         )}
 
+        {/* ── Organizer actions ── */}
+        {(item.createdBy === user?.uid || isAdmin) && (
+          <View style={styles.organizerActions}>
+            <Text style={styles.organizerLabel}>Organizer Actions</Text>
+            <View style={styles.organizerRow}>
+              <TouchableOpacity
+                style={styles.editBtn}
+                onPress={() => navigation.navigate('CreateAttraction', { attractionId: item.id, editMode: true })}
+              >
+                <Text style={styles.editBtnText}>✏️ Edit</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.deleteBtn}
+                onPress={async () => {
+                  const confirm = Platform.OS === 'web'
+                    ? window.confirm('Delete this attraction?')
+                    : await new Promise(resolve =>
+                        Alert.alert('Delete', 'This cannot be undone.', [
+                          { text: 'Cancel', onPress: () => resolve(false), style: 'cancel' },
+                          { text: 'Delete', onPress: () => resolve(true), style: 'destructive' },
+                        ])
+                      );
+                  if (!confirm) return;
+                  try {
+                    const { deleteAttraction } = await import('../../services/attractionService');
+                    await deleteAttraction(item.id);
+                    navigation.goBack();
+                  } catch (e) {
+                    Alert.alert('Error', e.message);
+                  }
+                }}
+              >
+                <Text style={styles.deleteBtnText}>🗑️ Delete</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
         {/* ── Action buttons ── */}
         <View style={styles.actionRow}>
           <TouchableOpacity
@@ -502,12 +653,21 @@ export default function DetailScreen({ route, navigation }) {
             <Text style={styles.directionsBtnText}>🧭  Get directions</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.shareBtn}
-            onPress={() => Alert.alert('Share', 'Share feature coming soon!')}
-          >
-            <Text style={styles.shareBtnText}>↑ Share</Text>
-          </TouchableOpacity>
+          <View style={styles.actionRowSecond}>
+            <TouchableOpacity
+              style={styles.shareBtn}
+              onPress={() => setShowQR(true)}
+            >
+              <Text style={styles.shareBtnText}>↑ Share</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.itineraryBtn}
+              onPress={handleAddToItinerary}
+            >
+              <Text style={styles.itineraryBtnText}>🗺️ Add to Plan</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* ── Reviews section ── */}
@@ -754,6 +914,177 @@ export default function DetailScreen({ route, navigation }) {
       )}
 
     </ScrollView>
+
+      {/* ── QR Code modal ── */}
+      {showQR && (
+        <View style={styles.modalOverlay}>
+          <View style={styles.qrSheet}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>📍 Share Location</Text>
+              <TouchableOpacity onPress={() => setShowQR(false)}>
+                <Text style={styles.modalClose}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.qrPlaceName}>{item.name}</Text>
+            <Text style={styles.qrAddress}>{item.address}</Text>
+
+            <View style={styles.qrWrap}>
+              <QRCode
+                value={`exploreease://attraction/${item.id}`}
+                size={220}
+                color="#1a1a1a"
+                backgroundColor="#fff"
+              />
+            </View>
+
+            <Text style={styles.qrHint}>
+              Scan this QR code to view this location in ExploreEase
+            </Text>
+
+            <View style={styles.qrBtnRow}>
+              <TouchableOpacity style={styles.qrChatBtn} onPress={handleOpenSendToChat}>
+                <Text style={styles.qrChatBtnText}>💬 Send to Chat</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.qrShareBtn}
+                onPress={() => {
+                  const shareText = `Check out ${item.name} on ExploreEase!\n📍 ${item.address ?? ''}\n\nOpen: https://cuoiky-b24bb.web.app/attraction/${item.id}`;
+                  if (Platform.OS === 'web') {
+                    if (navigator.share) {
+                      navigator.share({
+                        title: item.name,
+                        text:  shareText,
+                        url:   `https://cuoiky-b24bb.web.app/attraction/${item.id}`,
+                      }).catch(() => {});
+                    } else {
+                      navigator.clipboard.writeText(shareText);
+                      window.alert('Link copied to clipboard!');
+                    }
+                  } else {
+                    const { Share } = require('react-native');
+                    Share.share({ message: shareText, title: item.name });
+                  }
+                }}
+              >
+                <Text style={styles.qrShareBtnText}>↑ Share Link</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      )}
+
+      {/* ── Send to Chat modal ── */}
+      {showSendToChat && (
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalSheet}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Send to Chat</Text>
+              <TouchableOpacity onPress={() => setShowSendToChat(false)}>
+                <Text style={styles.modalClose}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.sendToChatSub}>
+              Share "{item?.name}" with a contact
+            </Text>
+
+            {loadingContacts ? (
+              <ActivityIndicator color="#1D9E75" style={{ marginVertical: 24 }} />
+            ) : chatContacts.length === 0 ? (
+              <Text style={{ textAlign: 'center', color: '#aaa', marginVertical: 24 }}>
+                No recent conversations found
+              </Text>
+            ) : (
+              <FlatList
+                data={chatContacts}
+                keyExtractor={c => c.id}
+                style={{ maxHeight: 360 }}
+                renderItem={({ item: contact }) => (
+                  <View style={styles.contactRow}>
+                    {contact.otherProfile?.profilePicUrl ? (
+                      <Image source={{ uri: contact.otherProfile.profilePicUrl }} style={styles.contactAvatar} />
+                    ) : (
+                      <View style={[styles.contactAvatar, styles.contactAvatarFallback]}>
+                        <Text style={styles.contactAvatarText}>
+                          {contact.otherProfile?.name?.[0]?.toUpperCase() ?? '?'}
+                        </Text>
+                      </View>
+                    )}
+                    <Text style={styles.contactName} numberOfLines={1}>{contact.otherProfile?.name ?? 'Unknown'}</Text>
+                    <TouchableOpacity
+                      style={[styles.contactSendBtn, sendingTo === contact.id && { opacity: 0.5 }]}
+                      disabled={sendingTo === contact.id}
+                      onPress={() => handleSendRecommendation(contact)}
+                    >
+                      {sendingTo === contact.id
+                        ? <ActivityIndicator color="#fff" size="small" />
+                        : <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Send</Text>
+                      }
+                    </TouchableOpacity>
+                  </View>
+                )}
+              />
+            )}
+          </View>
+        </View>
+      )}
+
+      {/* ── Itinerary picker modal ── */}
+      {showItineraryPicker && (
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalSheet}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>
+                {selectedPlan ? `Select Day — ${selectedPlan.title}` : 'Add to Travel Plan'}
+              </Text>
+              <TouchableOpacity onPress={() => {
+                if (selectedPlan) setSelectedPlan(null);
+                else setShowItineraryPicker(false);
+              }}>
+                <Text style={styles.modalClose}>{selectedPlan ? '←' : '✕'}</Text>
+              </TouchableOpacity>
+            </View>
+            {!selectedPlan ? (
+              travelPlans.map(plan => (
+                <TouchableOpacity
+                  key={plan.id}
+                  style={styles.planItem}
+                  onPress={() => handleSelectPlan(plan)}
+                >
+                  <Text style={styles.planItemEmoji}>🗺️</Text>
+                  <View style={styles.planItemInfo}>
+                    <Text style={styles.planItemTitle}>{plan.title}</Text>
+                    <Text style={styles.planItemSub}>
+                      {plan.days?.length ?? 0} day{(plan.days?.length ?? 0) !== 1 ? 's' : ''} · {plan.days?.reduce((sum, d) => sum + (d.stops?.length ?? 0), 0)} stops
+                    </Text>
+                  </View>
+                  <Text style={styles.planItemArrow}>›</Text>
+                </TouchableOpacity>
+              ))
+            ) : (
+              selectedPlan.days.map(day => (
+                <TouchableOpacity
+                  key={day.id}
+                  style={styles.planItem}
+                  onPress={() => handleSelectDay(selectedPlan, day)}
+                >
+                  <Text style={styles.planItemEmoji}>📅</Text>
+                  <View style={styles.planItemInfo}>
+                    <Text style={styles.planItemTitle}>{day.label}</Text>
+                    <Text style={styles.planItemSub}>
+                      {day.stops?.length ?? 0} stop{(day.stops?.length ?? 0) !== 1 ? 's' : ''}
+                    </Text>
+                  </View>
+                  <Text style={styles.planItemArrow}>›</Text>
+                </TouchableOpacity>
+              ))
+            )}
+          </View>
+        </View>
+      )}
+    </View>
   );
 }
 
@@ -921,10 +1252,11 @@ const styles = StyleSheet.create({
   sectionTitle:     { fontSize: 17, fontWeight: '700', color: '#1a1a1a', marginBottom: 12 },
   description:      { fontSize: 14, color: '#555', lineHeight: 22 },
 
-  actionRow:        { flexDirection: 'row', gap: 10, marginBottom: 24 },
-  directionsBtn:    { flex: 1, backgroundColor: '#1D9E75', borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
+  actionRow:        { flexDirection: 'column', gap: 10, marginBottom: 24 },
+  actionRowSecond:  { flexDirection: 'row', gap: 10 },
+  directionsBtn:    { backgroundColor: '#1D9E75', borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
   directionsBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
-  shareBtn:         { backgroundColor: '#fff', borderRadius: 12, paddingVertical: 14, paddingHorizontal: 20, alignItems: 'center', borderWidth: 1, borderColor: '#e0e0e0' },
+  shareBtn:         { flex: 1, backgroundColor: '#fff', borderRadius: 12, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: '#e0e0e0' },
   shareBtnText:     { color: '#1a1a1a', fontWeight: '600', fontSize: 14 },
 
   reviewsHeader:    { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
@@ -1005,4 +1337,48 @@ const styles = StyleSheet.create({
   replySubmitBtn:        { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10, backgroundColor: '#1D9E75' },
   replySubmitBtnDisabled: { backgroundColor: '#a0d4c0' },
   replySubmitBtnText:    { fontSize: 13, color: '#fff', fontWeight: '700' },
+
+  itineraryBtn:      { flex: 1, backgroundColor: '#fff', borderRadius: 12, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: '#e0e0e0' },
+  itineraryBtnText:  { color: '#1a1a1a', fontWeight: '600', fontSize: 13 },
+  modalOverlay:      { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end', zIndex: 100 },
+  modalSheet:        { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 20, paddingBottom: 40 },
+  modalHeader:       { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 16 },
+  modalTitle:        { fontSize: 17, fontWeight: '700', color: '#1a1a1a' },
+  modalClose:        { fontSize: 18, color: '#aaa', padding: 4 },
+  planItem:          { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#f0f0f0', gap: 12 },
+  planItemEmoji:     { fontSize: 24 },
+  planItemInfo:      { flex: 1 },
+  planItemTitle:     { fontSize: 15, fontWeight: '700', color: '#1a1a1a' },
+  planItemSub:       { fontSize: 12, color: '#aaa', marginTop: 2 },
+  planItemArrow:     { fontSize: 20, color: '#ccc' },
+  hoursCard:         { backgroundColor: '#fff', borderRadius: 12, padding: 12, marginBottom: 20, borderWidth: 1, borderColor: '#f0f0f0' },
+  hoursRow:          { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  openBadgeSmall:    { borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1 },
+  organizerActions:  { backgroundColor: '#fff', borderRadius: 14, padding: 16, borderWidth: 1, borderColor: '#f0f0f0', marginBottom: 16 },
+  organizerLabel:    { fontSize: 12, fontWeight: '700', color: '#888', textTransform: 'uppercase', marginBottom: 10 },
+  organizerRow:      { flexDirection: 'row', gap: 10 },
+  editBtn:           { flex: 1, backgroundColor: '#E1F5EE', borderRadius: 10, paddingVertical: 12, alignItems: 'center' },
+  editBtnText:       { color: '#0F6E56', fontWeight: '600', fontSize: 14 },
+  deleteBtn:         { flex: 1, backgroundColor: '#FCEBEB', borderRadius: 10, paddingVertical: 12, alignItems: 'center' },
+  deleteBtnText:     { color: '#E24B4A', fontWeight: '600', fontSize: 14 },
+
+  qrSheet:        { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingBottom: 40, alignItems: 'center' },
+  qrPlaceName:    { fontSize: 18, fontWeight: '700', color: '#1a1a1a', textAlign: 'center', marginBottom: 4 },
+  qrAddress:      { fontSize: 13, color: '#888', textAlign: 'center', marginBottom: 24 },
+  qrWrap:         { backgroundColor: '#fff', padding: 16, borderRadius: 16, borderWidth: 1, borderColor: '#f0f0f0', marginBottom: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 8, elevation: 4 },
+  qrHint:         { fontSize: 12, color: '#aaa', textAlign: 'center', marginBottom: 20, paddingHorizontal: 20 },
+  qrShareBtn:     { backgroundColor: '#1D9E75', borderRadius: 12, paddingVertical: 14, flex: 1, alignItems: 'center' },
+  qrShareBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+
+  qrBtnRow:       { flexDirection: 'row', gap: 10, width: '100%' },
+  qrChatBtn:      { backgroundColor: '#f0faf6', borderWidth: 1, borderColor: '#1D9E75', borderRadius: 12, paddingVertical: 14, flex: 1, alignItems: 'center' },
+  qrChatBtnText:  { color: '#1D9E75', fontWeight: '700', fontSize: 15 },
+
+  sendToChatSub:  { fontSize: 13, color: '#888', marginBottom: 16, paddingHorizontal: 4 },
+  contactRow:     { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#f2f2f2', gap: 12 },
+  contactAvatar:  { width: 42, height: 42, borderRadius: 21 },
+  contactAvatarFallback: { backgroundColor: '#1D9E75', alignItems: 'center', justifyContent: 'center' },
+  contactAvatarText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+  contactName:    { flex: 1, fontSize: 15, color: '#1a1a1a', fontWeight: '500' },
+  contactSendBtn: { backgroundColor: '#1D9E75', borderRadius: 8, paddingVertical: 8, paddingHorizontal: 16 },
 });

@@ -40,15 +40,21 @@ export default function RegisterScreen({ navigation }) {
     setLoading(true);
     try {
       await registerWithEmail(name.trim(), email.trim(), password);
-      await sendOTP(email.trim(), name.trim());
 
-      // Navigate immediately before AuthContext auto-login kicks in
+      // Send OTP — wrap in try/catch so email issues don't block registration
+      try {
+        await sendOTP(email.trim(), name.trim());
+      } catch (otpErr) {
+        console.warn('OTP send failed:', otpErr.message);
+      }
+
       navigation.navigate('OTP', {
         email:    email.trim(),
         name:     name.trim(),
         password,
       });
     } catch (err) {
+      console.error('Register error:', err.code, err.message);
       Alert.alert('Registration failed', getFriendlyError(err.code) ?? err.message);
     } finally {
       setLoading(false);

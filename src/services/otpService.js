@@ -1,4 +1,4 @@
-import emailjs from '@emailjs/browser';
+import { Platform } from 'react-native';
 import {
   doc, setDoc, getDoc, deleteDoc, serverTimestamp,
 } from 'firebase/firestore';
@@ -14,15 +14,39 @@ function generateOTP() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
+// ── Send email via EmailJS (platform-aware) ───────────────
+async function sendEmail(templateParams) {
+  if (Platform.OS === 'web') {
+    // Use browser version on web
+    const emailjs = require('@emailjs/browser').default;
+    await emailjs.send(SERVICE_ID, TEMPLATE_ID, templateParams, PUBLIC_KEY);
+  } else {
+    // Use fetch directly on mobile — avoids window.location issue
+    const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        service_id:  SERVICE_ID,
+        template_id: TEMPLATE_ID,
+        user_id:     PUBLIC_KEY,
+        accessToken: 'xEGMzsbTxXZd_TPpL_6iu',
+        template_params: templateParams,
+      }),
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`EmailJS error: ${text}`);
+    }
+  }
+}
+
 // ─────────────────────────────────────────────
-// 1. SEND OTP — generates code, saves to
-//    Firestore, sends email via EmailJS
+// 1. SEND OTP
 // ─────────────────────────────────────────────
 export async function sendOTP(email, name) {
   const otp     = generateOTP();
-  const expires = Date.now() + 10 * 60 * 1000; // 10 minutes from now
+  const expires = Date.now() + 10 * 60 * 1000;
 
-  // Save OTP to Firestore under 'otps' collection
   await setDoc(doc(db, 'otps', email), {
     otp,
     expires,
@@ -30,46 +54,32 @@ export async function sendOTP(email, name) {
     createdAt: serverTimestamp(),
   });
 
-  // Send email via EmailJS
-  await emailjs.send(
-    SERVICE_ID,
-    TEMPLATE_ID,
-    {
-      email:      email,   // matches {{email}} in template To field
-      passcode:   otp,     // matches {{passcode}} in template body
-      name:       name,    // matches {{name}} in template
-      time:       new Date(expires).toLocaleTimeString(),
-    },
-    PUBLIC_KEY
-  );
+  await sendEmail({
+    email:    email,
+    passcode: otp,
+    name:     name,
+    time:     new Date(expires).toLocaleTimeString(),
+  });
 
-  return otp; // return for dev testing only — remove in production
+  return otp;
 }
 
 // ─────────────────────────────────────────────
-// 2. VERIFY OTP — checks code against Firestore
+// 2. VERIFY OTP
 // ─────────────────────────────────────────────
 export async function verifyOTP(email, enteredCode) {
   const snap = await getDoc(doc(db, 'otps', email));
-
   if (!snap.exists()) {
     throw new Error('No OTP found. Please request a new code.');
   }
-
   const { otp, expires } = snap.data();
-
-  // Check expiry
   if (Date.now() > expires) {
     await deleteDoc(doc(db, 'otps', email));
     throw new Error('Code has expired. Please request a new one.');
   }
-
-  // Check code
   if (enteredCode.trim() !== otp) {
     throw new Error('Incorrect code. Please try again.');
   }
-
-  // OTP is correct — delete it so it can't be reused
   await deleteDoc(doc(db, 'otps', email));
   return true;
 }

@@ -41,4 +41,6 @@ export const capitalize = (str) => {
 };
 
 export const generateId = () =>
-  Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
+  Math.random().toString(36).substr(2, 9) +
+  Math.random().toString(36).substr(2, 9) +
+  Date.now().toString(36);

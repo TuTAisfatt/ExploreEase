@@ -1,4 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
+import { getFollowerCount, getFollowingCount } from '../../services/socialService';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, Image, Alert, Platform, Switch,
@@ -9,9 +11,11 @@ import { useAuth } from '../../context/AuthContext';
 import { INTEREST_TAGS, TRAVEL_STYLES } from '../../utils/constants';
 
 export default function ProfileScreen({ navigation }) {
-  const { user, userProfile, logout, isAdmin, recheckAuth } = useAuth();
+  const { user, userProfile, logout, isAdmin, recheckAuth, refreshProfile } = useAuth();
 
-  const [biometricEnabled, setBiometricEnabled] = useState(false);
+  const [biometricEnabled,  setBiometricEnabled]  = useState(false);
+  const [followerCount,     setFollowerCount]      = useState(0);
+  const [followingCount,    setFollowingCount]     = useState(0);
 
   // Load biometric setting on mount
   useEffect(() => {
@@ -19,6 +23,14 @@ export default function ProfileScreen({ navigation }) {
       setBiometricEnabled(val === 'true');
     });
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!user) return;
+      getFollowerCount(user.uid).then(setFollowerCount);
+      getFollowingCount(user.uid).then(setFollowingCount);
+    }, [user])
+  );
 
   async function handleBiometricToggle(value) {
     if (value) {
@@ -47,6 +59,21 @@ export default function ProfileScreen({ navigation }) {
     } else {
       await AsyncStorage.setItem('biometricEnabled', 'false');
       setBiometricEnabled(false);
+    }
+  }
+
+  async function handleTwoFactorToggle(value) {
+    try {
+      const { updateUserProfile } = await import('../../services/userService');
+      await updateUserProfile(user.uid, { twoFactorEnabled: value });
+      await refreshProfile();
+      const msg = value
+        ? "Two-factor auth enabled. You'll need to verify via email on login."
+        : 'Two-factor auth disabled.';
+      if (Platform.OS === 'web') window.alert(msg);
+      else Alert.alert('Updated', msg);
+    } catch (e) {
+      Alert.alert('Error', 'Could not update 2FA setting.');
     }
   }
 
@@ -118,6 +145,25 @@ export default function ProfileScreen({ navigation }) {
         <Text style={styles.name}>{userProfile?.name ?? '—'}</Text>
         <Text style={styles.email}>{user?.email ?? '—'}</Text>
 
+        {/* Followers / Following */}
+        <View style={styles.followRow}>
+          <TouchableOpacity
+            style={styles.followStat}
+            onPress={() => navigation.navigate('FollowList', { userId: user.uid, type: 'followers' })}
+          >
+            <Text style={styles.followCount}>{followerCount}</Text>
+            <Text style={styles.followLabel}>Followers</Text>
+          </TouchableOpacity>
+          <View style={styles.followDivider} />
+          <TouchableOpacity
+            style={styles.followStat}
+            onPress={() => navigation.navigate('FollowList', { userId: user.uid, type: 'following' })}
+          >
+            <Text style={styles.followCount}>{followingCount}</Text>
+            <Text style={styles.followLabel}>Following</Text>
+          </TouchableOpacity>
+        </View>
+
         {/* Email verification warning */}
         {user && !user.emailVerified && (
           <View style={styles.verifyBanner}>
@@ -164,10 +210,27 @@ export default function ProfileScreen({ navigation }) {
           onPress={() => navigation.navigate('EditProfile')}
         />
 
+        {userProfile?.role !== 'organizer' && !isAdmin && (
+          <ActionButton
+            label="🏢  Become an Organizer"
+            onPress={() => navigation.navigate('OrganizerRequest')}
+          />
+        )}
+
+        {userProfile?.role === 'organizer' && (
+          <View style={styles.organizerBadgeRow}>
+            <Text style={styles.organizerBadgeEmoji}>✅</Text>
+            <View>
+              <Text style={styles.organizerBadgeTitle}>Organizer Account</Text>
+              <Text style={styles.organizerBadgeSub}>You can submit events and attractions</Text>
+            </View>
+          </View>
+        )}
+
         {isAdmin && (
           <ActionButton
             label="🛠️   Admin dashboard"
-            onPress={() => navigation.navigate('Admin')}
+            onPress={() => navigation.navigate('AdminDashboard')}
           />
         )}
 
@@ -188,6 +251,23 @@ export default function ProfileScreen({ navigation }) {
           <Switch
             value={biometricEnabled}
             onValueChange={handleBiometricToggle}
+            trackColor={{ false: '#e0e0e0', true: '#1D9E75' }}
+            thumbColor="#fff"
+          />
+        </View>
+
+        {/* ── 2FA toggle ── */}
+        <View style={styles.biometricRow}>
+          <View style={styles.biometricLeft}>
+            <Text style={styles.biometricIcon}>🔑</Text>
+            <View>
+              <Text style={styles.biometricTitle}>Two-factor auth</Text>
+              <Text style={styles.biometricSub}>Require email OTP on login</Text>
+            </View>
+          </View>
+          <Switch
+            value={userProfile?.twoFactorEnabled ?? false}
+            onValueChange={handleTwoFactorToggle}
             trackColor={{ false: '#e0e0e0', true: '#1D9E75' }}
             thumbColor="#fff"
           />
@@ -272,4 +352,15 @@ const styles = StyleSheet.create({
   biometricIcon:   { fontSize: 22 },
   biometricTitle:  { fontSize: 15, color: '#1a1a1a', fontWeight: '500' },
   biometricSub:    { fontSize: 12, color: '#aaa', marginTop: 2 },
+
+  organizerBadgeRow:   { backgroundColor: '#E1F5EE', borderRadius: 14, paddingHorizontal: 18, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', gap: 14, borderWidth: 1, borderColor: '#c8eedd' },
+  organizerBadgeEmoji: { fontSize: 22 },
+  organizerBadgeTitle: { fontSize: 15, color: '#0F6E56', fontWeight: '700' },
+  organizerBadgeSub:   { fontSize: 12, color: '#1D9E75', marginTop: 2 },
+
+  followRow:     { flexDirection: 'row', alignItems: 'center', marginTop: 14, backgroundColor: '#fff', borderRadius: 16, paddingVertical: 12, paddingHorizontal: 24, borderWidth: 1, borderColor: '#f0f0f0', gap: 8 },
+  followStat:    { flex: 1, alignItems: 'center', gap: 2 },
+  followCount:   { fontSize: 20, fontWeight: '700', color: '#1a1a1a' },
+  followLabel:   { fontSize: 12, color: '#1D9E75', fontWeight: '600' },
+  followDivider: { width: 1, height: 32, backgroundColor: '#f0f0f0' },
 });
